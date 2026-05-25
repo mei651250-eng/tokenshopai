@@ -25,8 +25,8 @@ const (
 	StrategySmart      RouteStrategy = "smart"          // 智能路由（综合评分）
 )
 
-// RouteResult 路由结果
-type RouteResult struct {
+// SmartRouteResult 智能路由结果
+type SmartRouteResult struct {
 	ModelConfig *gateway.ModelConfig `json:"model_config"`
 	Strategy    RouteStrategy        `json:"strategy"`
 	Score       float64              `json:"score"`
@@ -74,7 +74,7 @@ func NewSmartRouter(logger *zap.Logger, rdb *redis.Client, strategy RouteStrateg
 }
 
 // Route 路由请求到最佳上游
-func (sr *SmartRouter) Route(ctx context.Context, modelName string, configs []*gateway.ModelConfig) (*RouteResult, error) {
+func (sr *SmartRouter) Route(ctx context.Context, modelName string, configs []*gateway.ModelConfig) (*SmartRouteResult, error) {
 	if len(configs) == 0 {
 		return nil, fmt.Errorf("no available model configs for %s", modelName)
 	}
@@ -111,7 +111,7 @@ func (sr *SmartRouter) Route(ctx context.Context, modelName string, configs []*g
 }
 
 // routeCheapest 最低成本路由
-func (sr *SmartRouter) routeCheapest(configs []*gateway.ModelConfig) *RouteResult {
+func (sr *SmartRouter) routeCheapest(configs []*gateway.ModelConfig) *SmartRouteResult {
 	sort.Slice(configs, func(i, j int) bool {
 		costI := configs[i].InputPrice + configs[i].OutputPrice
 		costJ := configs[j].InputPrice + configs[j].OutputPrice
@@ -119,7 +119,7 @@ func (sr *SmartRouter) routeCheapest(configs []*gateway.ModelConfig) *RouteResul
 	})
 
 	cfg := configs[0]
-	return &RouteResult{
+	return &SmartRouteResult{
 		ModelConfig: cfg,
 		Strategy:    StrategyCheapest,
 		CostPer1K:   cfg.InputPrice + cfg.OutputPrice,
@@ -128,13 +128,13 @@ func (sr *SmartRouter) routeCheapest(configs []*gateway.ModelConfig) *RouteResul
 }
 
 // routeFastest 最低延迟路由
-func (sr *SmartRouter) routeFastest(configs []*gateway.ModelConfig) *RouteResult {
+func (sr *SmartRouter) routeFastest(configs []*gateway.ModelConfig) *SmartRouteResult {
 	sort.Slice(configs, func(i, j int) bool {
 		return configs[i].LatencyMs < configs[j].LatencyMs
 	})
 
 	cfg := configs[0]
-	return &RouteResult{
+	return &SmartRouteResult{
 		ModelConfig: cfg,
 		Strategy:    StrategyFastest,
 		LatencyMs:   cfg.LatencyMs,
@@ -143,14 +143,14 @@ func (sr *SmartRouter) routeFastest(configs []*gateway.ModelConfig) *RouteResult
 }
 
 // routeRoundRobin 轮询路由
-func (sr *SmartRouter) routeRoundRobin(modelName string, configs []*gateway.ModelConfig) *RouteResult {
+func (sr *SmartRouter) routeRoundRobin(modelName string, configs []*gateway.ModelConfig) *SmartRouteResult {
 	sr.mu.Lock()
 	sr.counters[modelName]++
 	idx := sr.counters[modelName] % int64(len(configs))
 	sr.mu.Unlock()
 
 	cfg := configs[idx]
-	return &RouteResult{
+	return &SmartRouteResult{
 		ModelConfig: cfg,
 		Strategy:    StrategyRoundRobin,
 		CostPer1K:   cfg.InputPrice + cfg.OutputPrice,
@@ -159,7 +159,7 @@ func (sr *SmartRouter) routeRoundRobin(modelName string, configs []*gateway.Mode
 }
 
 // routeWeighted 加权随机路由
-func (sr *SmartRouter) routeWeighted(configs []*gateway.ModelConfig) *RouteResult {
+func (sr *SmartRouter) routeWeighted(configs []*gateway.ModelConfig) *SmartRouteResult {
 	totalWeight := 0
 	for _, cfg := range configs {
 		totalWeight += cfg.Weight
@@ -168,7 +168,7 @@ func (sr *SmartRouter) routeWeighted(configs []*gateway.ModelConfig) *RouteResul
 	if totalWeight == 0 {
 		// 权重都是0，等概率选择
 		cfg := configs[0]
-		return &RouteResult{
+		return &SmartRouteResult{
 			ModelConfig: cfg,
 			Strategy:    StrategyWeighted,
 			CostPer1K:   cfg.InputPrice + cfg.OutputPrice,
@@ -182,7 +182,7 @@ func (sr *SmartRouter) routeWeighted(configs []*gateway.ModelConfig) *RouteResul
 	for _, cfg := range configs {
 		cumWeight += cfg.Weight
 		if int64(cumWeight) > target {
-			return &RouteResult{
+			return &SmartRouteResult{
 				ModelConfig: cfg,
 				Strategy:    StrategyWeighted,
 				CostPer1K:   cfg.InputPrice + cfg.OutputPrice,
@@ -192,7 +192,7 @@ func (sr *SmartRouter) routeWeighted(configs []*gateway.ModelConfig) *RouteResul
 	}
 
 	cfg := configs[len(configs)-1]
-	return &RouteResult{
+	return &SmartRouteResult{
 		ModelConfig: cfg,
 		Strategy:    StrategyWeighted,
 		CostPer1K:   cfg.InputPrice + cfg.OutputPrice,
@@ -201,7 +201,7 @@ func (sr *SmartRouter) routeWeighted(configs []*gateway.ModelConfig) *RouteResul
 }
 
 // routeFailover 故障转移路由
-func (sr *SmartRouter) routeFailover(configs []*gateway.ModelConfig) *RouteResult {
+func (sr *SmartRouter) routeFailover(configs []*gateway.ModelConfig) *SmartRouteResult {
 	// 按优先级排序
 	sort.Slice(configs, func(i, j int) bool {
 		return configs[i].Priority < configs[j].Priority
@@ -210,7 +210,7 @@ func (sr *SmartRouter) routeFailover(configs []*gateway.ModelConfig) *RouteResul
 	// 选择第一个可用的
 	for _, cfg := range configs {
 		if cfg.SuccessRate >= DefaultRouterConfig.MinSuccessRate {
-			return &RouteResult{
+			return &SmartRouteResult{
 				ModelConfig: cfg,
 				Strategy:    StrategyFailover,
 				CostPer1K:   cfg.InputPrice + cfg.OutputPrice,
@@ -221,7 +221,7 @@ func (sr *SmartRouter) routeFailover(configs []*gateway.ModelConfig) *RouteResul
 
 	// 所有都不太健康，选优先级最高的
 	cfg := configs[0]
-	return &RouteResult{
+	return &SmartRouteResult{
 		ModelConfig: cfg,
 		Strategy:    StrategyFailover,
 		CostPer1K:   cfg.InputPrice + cfg.OutputPrice,
@@ -230,7 +230,7 @@ func (sr *SmartRouter) routeFailover(configs []*gateway.ModelConfig) *RouteResul
 }
 
 // routeSmart 智能路由（综合评分）
-func (sr *SmartRouter) routeSmart(configs []*gateway.ModelConfig) *RouteResult {
+func (sr *SmartRouter) routeSmart(configs []*gateway.ModelConfig) *SmartRouteResult {
 	cfg := DefaultRouterConfig
 
 	type scored struct {
@@ -283,7 +283,7 @@ func (sr *SmartRouter) routeSmart(configs []*gateway.ModelConfig) *RouteResult {
 	})
 
 	best := candidates[0]
-	return &RouteResult{
+	return &SmartRouteResult{
 		ModelConfig: best.config,
 		Strategy:    StrategySmart,
 		Score:       math.Round(best.score*100) / 100,

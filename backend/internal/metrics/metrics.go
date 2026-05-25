@@ -50,7 +50,6 @@ func (m *PrometheusMetrics) RecordRequest(ctx context.Context, model, provider, 
 	m.latencies = append(m.latencies, latencyMs)
 
 	// 写入Redis时间序列
-	now := time.Now().Unix()
 	minuteKey := time.Now().Format("200601021504")
 
 	// 全局指标
