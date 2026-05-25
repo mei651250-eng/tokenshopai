@@ -96,7 +96,7 @@ func main() {
 		cfg.JWT.Issuer,
 	)
 
-	modelRouter := router.NewModelRouter(logger, lb.StrategyWeightedRandom, cfg.Gateway.MaxRetries)
+	modelRouter := smartrouter.NewModelRouter(logger, lb.StrategyWeightedRandom, cfg.Gateway.MaxRetries)
 	aiProxy := proxy.NewAIProxy(logger, modelRouter, cfg.Gateway.Timeout, cfg.Gateway.StreamTimeout)
 	billingService := billing.NewBillingService(logger, rdb)
 	monitorService := monitor.NewMonitorService(logger)
@@ -138,9 +138,6 @@ func main() {
 
 	// 密钥保险库
 	keyVault := keyvault.NewKeyVault(logger, rdb, os.Getenv("KEYVAULT_MASTER_KEY"))
-
-	// 智能路由器
-	smartRouter := smartrouter.NewSmartRouter(logger, rdb, smartrouter.StrategySmart)
 
 	// 分销服务
 	distService := distribution.NewDistributionService(logger, rdb)
@@ -1558,7 +1555,7 @@ func main() {
 				"total_requests":  metrics.TotalRequests,
 				"total_tokens":   metrics.TotalTokens,
 				"total_amount":   metrics.TotalAmount,
-				"avg_latency":   metrics.AvgLatency,
+				"avg_latency":   metrics.P50LatencyMs,
 				"success_rate":   metrics.SuccessRate,
 				"active_models":  len(metrics.Models),
 			})
@@ -1967,7 +1964,7 @@ func handleStreamResponse(
 	c.Writer.Flush()
 }
 
-func handleListModels(c *gin.Context, router *router.ModelRouter) {
+func handleListModels(c *gin.Context, router *smartrouter.ModelRouter) {
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
 		"data":   []interface{}{},
