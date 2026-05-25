@@ -1,0 +1,542 @@
+openapi: 3.0.3
+info:
+  title: TokenHub API
+  description: |
+    企业级 AI API 网关与多租户 SaaS 管理平台 OpenAPI 规范。
+    
+    ## 认证方式
+    - **JWT**: 用于管理后台 API，通过 `/auth/login` 获取
+    - **API Key**: 用于 AI 模型调用 API，格式 `sk-xxx`
+    
+    ## 速率限制
+    - 管理 API: 100次/分钟
+    - AI调用 API: 按Key配置的速率限制
+  version: 0.1.0
+  contact:
+    name: Token Hub Team
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.tokenhub.com
+    description: Production
+  - url: http://localhost:8080
+    description: Development
+
+tags:
+  - name: Auth
+    description: 认证与注册
+  - name: Chat
+    description: AI 模型调用
+  - name: Models
+    description: 模型管理
+  - name: Billing
+    description: 计费管理
+  - name: Wallet
+    description: Web3 钱包管理
+  - name: Payment
+    description: 支付渠道
+  - name: Finance
+    description: 财务管理
+  - name: Users
+    description: 用户管理
+  - name: RBAC
+    description: 角色权限管理
+  - name: Audit
+    description: 审计日志
+  - name: Notifications
+    description: 通知中心
+  - name: Profile
+    description: 个人中心
+  - name: Monitor
+    description: 监控
+  - name: Report
+    description: 报表
+  - name: Security
+    description: 安全管理
+
+paths:
+  # ==================== Auth ====================
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: 邮箱密码登录
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    $ref: '#/components/schemas/TokenPair'
+                  user:
+                    $ref: '#/components/schemas/UserInfo'
+        '401':
+          description: 邮箱或密码错误
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: 用户注册
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                username:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                tenant_id:
+                  type: string
+      responses:
+        '201':
+          description: 注册成功
+        '409':
+          description: 邮箱已注册
+
+  /auth/verification/send:
+    post:
+      tags: [Auth]
+      summary: 发送验证码
+      operationId: sendVerificationCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, target, purpose]
+              properties:
+                type:
+                  type: string
+                  enum: [sms, email]
+                target:
+                  type: string
+                purpose:
+                  type: string
+                  enum: [login, register, reset_password]
+                country_code:
+                  type: string
+      responses:
+        '200':
+          description: 验证码已发送
+        '429':
+          description: 发送频率超限
+
+  /auth/login/code:
+    post:
+      tags: [Auth]
+      summary: 验证码登录
+      operationId: loginByCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, target, code]
+              properties:
+                type:
+                  type: string
+                  enum: [sms, email]
+                target:
+                  type: string
+                code:
+                  type: string
+                country_code:
+                  type: string
+      responses:
+        '200':
+          description: 登录成功
+
+  /auth/face/register-options:
+    post:
+      tags: [Auth]
+      summary: WebAuthn 注册选项
+      operationId: faceRegisterOptions
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 注册选项
+
+  /auth/face/auth-options:
+    post:
+      tags: [Auth]
+      summary: WebAuthn 认证选项
+      operationId: faceAuthOptions
+
+  # ==================== AI Chat ====================
+  /v1/chat/completions:
+    post:
+      tags: [Chat]
+      summary: Chat Completion (兼容 OpenAI)
+      operationId: createChatCompletion
+      security:
+        - APIKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+        '401':
+          description: API Key 无效
+        '402':
+          description: 余额不足
+        '429':
+          description: 速率限制
+        '502':
+          description: 上游错误
+
+  /v1/models:
+    get:
+      tags: [Models]
+      summary: 可用模型列表
+      operationId: listModels
+      security:
+        - APIKeyAuth: []
+      responses:
+        '200':
+          description: 模型列表
+
+  # ==================== Admin ====================
+  /admin/billing/balance:
+    get:
+      tags: [Billing]
+      summary: 查询余额
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 余额信息
+
+  /admin/wallet/list:
+    get:
+      tags: [Wallet]
+      summary: 钱包列表
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 钱包列表
+
+  /admin/wallet/bind:
+    post:
+      tags: [Wallet]
+      summary: 绑定钱包
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, chain_type]
+              properties:
+                wallet_type:
+                  type: string
+                address:
+                  type: string
+                chain_type:
+                  type: string
+                label:
+                  type: string
+      responses:
+        '200':
+          description: 绑定成功
+
+  /admin/payment/channels:
+    get:
+      tags: [Payment]
+      summary: 可用支付渠道
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: currency
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 渠道列表
+
+  /admin/users:
+    get:
+      tags: [Users]
+      summary: 用户列表
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: role
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 用户列表
+
+  /admin/roles:
+    get:
+      tags: [RBAC]
+      summary: 角色列表
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 角色列表
+
+  /admin/audit-logs:
+    get:
+      tags: [Audit]
+      summary: 审计日志列表
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: user
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+        - name: level
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 审计日志列表
+
+  /admin/notifications:
+    get:
+      tags: [Notifications]
+      summary: 通知列表
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 通知列表
+
+  /admin/profile:
+    get:
+      tags: [Profile]
+      summary: 获取个人信息
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 个人信息
+
+  /admin/monitor/metrics:
+    get:
+      tags: [Monitor]
+      summary: 监控指标
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: 监控指标
+
+  /admin/report/summary:
+    get:
+      tags: [Report]
+      summary: 报表概览
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: time_range
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [1h, 24h, 7d, 30d, 90d]
+      responses:
+        '200':
+          description: 概览数据
+
+  /health:
+    get:
+      tags: [Auth]
+      summary: 健康检查
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: 服务健康状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded]
+                  version:
+                    type: string
+                  time:
+                    type: string
+                    format: date-time
+                  checks:
+                    type: object
+                    properties:
+                      database:
+                        type: string
+                      redis:
+                        type: string
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    APIKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    TokenPair:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+
+    UserInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+        tenant_id:
+          type: string
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          example: gpt-4o
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        max_tokens:
+          type: integer
+          minimum: 1
+        stream:
+          type: boolean
+          default: false
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          type: string
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: chat.completion
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: '#/components/schemas/ChatMessage'
+              finish_reason:
+                type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer

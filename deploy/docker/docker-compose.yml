@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # ==================== 后端 ====================
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: ../deploy/docker/Dockerfile.backend
+    container_name: tokenhub-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - CONFIG_PATH=/app/configs/config.yaml
+      - ADMIN_EMAIL=admin@tokenhub.com
+      - ADMIN_PASSWORD=Admin@2026
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - ../../configs:/app/configs:ro
+      - uploads:/app/uploads
+      - ../../backend/scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tokenhub
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ==================== 前端 ====================
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: ../deploy/docker/Dockerfile.frontend
+    container_name: tokenhub-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - tokenhub
+
+  # ==================== PostgreSQL ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: tokenhub-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tokenhub
+      POSTGRES_PASSWORD: tokenhub_secret
+      POSTGRES_DB: tokenhub
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - tokenhub
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenhub"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ==================== Redis ====================
+  redis:
+    image: redis:7-alpine
+    container_name: tokenhub-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - tokenhub
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ==================== Prometheus (可选) ====================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: tokenhub-prometheus
+    profiles:
+      - monitoring
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - tokenhub
+
+  # ==================== Grafana (可选) ====================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: tokenhub-grafana
+    profiles:
+      - monitoring
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - tokenhub
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+
+networks:
+  tokenhub:
+    driver: bridge

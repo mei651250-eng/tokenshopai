@@ -1,0 +1,29 @@
+# Build stage
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/server ./cmd/server
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk --no-cache add ca-certificates tzdata
+WORKDIR /app
+
+COPY --from=builder /bin/server .
+# 注意：配置文件通过ConfigMap/Volume挂载，不打包到镜像中
+# 本地开发时可挂载 configs/ 目录
+
+# 创建上传目录
+RUN mkdir -p /app/uploads/avatars
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:8080/health || exit 1
+
+CMD ["./server"]

@@ -1,0 +1,215 @@
+server:
+  port: 8080
+  mode: debug
+  read_timeout: 30s
+  write_timeout: 120s
+  graceful_wait: 15s
+
+database:
+  host: localhost
+  port: 5432
+  user: tokenhub
+  password: tokenhub_secret
+  dbname: tokenhub
+  max_idle_conns: 10
+  max_open_conns: 100
+  log_level: warn
+
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
+  pool_size: 100
+  min_idle_conns: 10
+
+jwt:
+  secret: "your-super-secret-key-change-in-production"
+  expire: 24h
+  issuer: tokenhub
+  refresh_exp: 168h
+
+gateway:
+  max_retries: 3
+  timeout: 60s
+  stream_timeout: 300s
+  max_concurrent: 1000
+  rate_limit_per_sec: 100
+
+billing:
+  default_currency: CNY
+  min_balance: 100
+  token_granularity: 1
+
+# Web3 钱包与加密货币充值配置
+wallet:
+  # 平台收款地址（按链配置，实际生产中应为多签钱包或冷钱包）
+  deposit_addresses:
+    ethereum: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+    bsc: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+    polygon: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+    arbitrum: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+    optimism: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+    tron: "TYDzsWUZbMF6n3qG1GmwVsQ1v9Xd9gKb0S"
+    solana: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
+    avalanche: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"
+  # 区块链监控服务配置
+  chain_monitor:
+    poll_interval: 10s
+    batch_size: 100
+
+# 支付渠道配置
+payment:
+  alipay:
+    enabled: true
+    app_id: ""
+    private_key: ""
+    public_key: ""
+    notify_url: "https://api.tokenhub.com/auth/callback/alipay"
+    is_sandbox: true
+    logo_url: "/icons/alipay.svg"   # 自定义 Logo，留空使用默认
+  wechat_pay:
+    enabled: true
+    app_id: ""
+    mch_id: ""
+    api_key: ""
+    cert_path: ""
+    notify_url: "https://api.tokenhub.com/auth/callback/wechat"
+    is_sandbox: true
+    logo_url: "/icons/wechat_pay.svg"
+  paypal:
+    enabled: true
+    client_id: ""
+    client_secret: ""
+    mode: sandbox  # sandbox | live
+    notify_url: "https://api.tokenhub.com/auth/callback/paypal"
+    logo_url: "/icons/paypal.svg"
+  worldfirst:
+    enabled: true
+    merchant_id: ""
+    api_key: ""
+    api_secret: ""
+    notify_url: "https://api.tokenhub.com/auth/callback/worldfirst"
+    logo_url: "/icons/worldfirst.svg"
+  payoneer:
+    enabled: true
+    merchant_id: ""
+    api_key: ""
+    api_secret: ""
+    notify_url: "https://api.tokenhub.com/auth/callback/payoneer"
+    logo_url: "/icons/payoneer.svg"
+  wise:
+    enabled: true
+    api_key: ""
+    profile_id: ""
+    webhook_secret: ""
+    notify_url: "https://api.tokenhub.com/auth/callback/wise"
+    logo_url: "/icons/wise.svg"
+  stripe:
+    enabled: true
+    publishable_key: ""
+    secret_key: ""
+    webhook_secret: ""
+    notify_url: "https://api.tokenhub.com/auth/callback/stripe"
+    logo_url: "/icons/stripe.svg"
+
+# 验证码服务配置
+verification:
+  sms:
+    provider: aliyun  # aliyun | tencent | twilio | vonage
+    aliyun:
+      access_key_id: ""
+      access_key_secret: ""
+      sign_name: "TokenHub"
+      template_code: "SMS_123456"
+    tencent:
+      secret_id: ""
+      secret_key: ""
+      sdk_app_id: ""
+      sign_name: "TokenHub"
+      template_id: ""
+    twilio:
+      account_sid: ""
+      auth_token: ""
+      from_number: ""
+    vonage:
+      api_key: ""
+      api_secret: ""
+      from_name: "TokenHub"
+    code_length: 6
+    expire_minutes: 5
+    cooldown_seconds: 60
+    max_send_per_hour: 5
+    max_verify_attempts: 5
+  email:
+    provider: smtp  # smtp | sendgrid
+    smtp:
+      host: "smtp.tokenhub.com"
+      port: 465
+      username: ""
+      password: ""
+      from_address: "noreply@tokenhub.com"
+      from_name: "TokenHub"
+    sendgrid:
+      api_key: ""
+      from_address: "noreply@tokenhub.com"
+      from_name: "TokenHub"
+    code_length: 6
+    expire_minutes: 5
+    cooldown_seconds: 60
+    max_send_per_hour: 5
+
+monitor:
+  enable_metrics: true
+  metrics_path: /metrics
+  report_interval: 10s
+  alert_webhook: ""
+
+security:
+  enable_waf: true
+  enable_desensitize: true
+  blocked_ips: []
+  max_request_body: 10485760
+
+i18n:
+  default_locale: zh-CN
+  supported_locales:
+    - zh-CN
+    - en-US
+    - ja-JP
+    - ko-KR
+
+# 密钥保险库配置
+keyvault:
+  # 主加密密钥（生产环境必须从环境变量 KEYVAULT_MASTER_KEY 加载，不能硬编码）
+  master_key: "change-me-in-production-32bytes!"
+
+# 智能路由配置
+smart_router:
+  default_strategy: smart  # cheapest | fastest | round_robin | weighted | failover | smart
+  cost_weight: 0.4
+  latency_weight: 0.3
+  reliability_weight: 0.3
+  max_latency_ms: 30000
+  min_success_rate: 0.95
+
+# Token缓存配置
+token_cache:
+  enabled: true
+  ttl: 10m
+  max_entries: 100000
+
+# 分销系统配置
+distribution:
+  default_commission_rate: 0.15
+  max_levels: 2
+  parent_commission_rate: 0.2
+  settlement_day: 1  # 每月几号结算
+
+# 配额默认值
+quota:
+  default_daily_tokens: 1000000
+  default_monthly_tokens: 30000000
+  default_daily_requests: 10000
+  default_monthly_amount: 10000000  # 10万分
+  default_alert_at: 0.8
+  default_block_at: 1.0

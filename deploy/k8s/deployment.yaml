@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tokenhub-backend
+  namespace: tokenhub
+  labels:
+    app: tokenhub-backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: tokenhub-backend
+  template:
+    metadata:
+      labels:
+        app: tokenhub-backend
+    spec:
+      containers:
+        - name: backend
+          image: tokenhub/backend:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: CONFIG_PATH
+              value: /app/configs/config.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /app/configs
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: tokenhub-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tokenhub-backend
+  namespace: tokenhub
+spec:
+  selector:
+    app: tokenhub-backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tokenhub-backend-hpa
+  namespace: tokenhub
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tokenhub-backend
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tokenhub-ingress
+  namespace: tokenhub
+  annotations:
+    nginx.ingress.kubernetes.io/websocket-services: "tokenhub-backend"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.tokenhub.example.com
+      secretName: tokenhub-tls
+  rules:
+    - host: api.tokenhub.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tokenhub-backend
+                port:
+                  number: 8080
