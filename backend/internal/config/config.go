@@ -103,6 +103,7 @@ type ChainMonitorConfig struct {
 // PaymentConfig 支付渠道配置
 type PaymentConfig struct {
 	Alipay     AlipayConfig     `mapstructure:"alipay"`
+	AlipayHK   AlipayHKConfig   `mapstructure:"alipay_hk"`
 	WeChatPay  WeChatPayConfig  `mapstructure:"wechat_pay"`
 	PayPal     PayPalConfig     `mapstructure:"paypal"`
 	WorldFirst WorldFirstConfig `mapstructure:"worldfirst"`
@@ -112,6 +113,16 @@ type PaymentConfig struct {
 }
 
 type AlipayConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	AppID      string `mapstructure:"app_id"`
+	PrivateKey string `mapstructure:"private_key"`
+	PublicKey  string `mapstructure:"public_key"`
+	NotifyURL  string `mapstructure:"notify_url"`
+	IsSandbox  bool   `mapstructure:"is_sandbox"`
+	LogoURL    string `mapstructure:"logo_url"`
+}
+
+type AlipayHKConfig struct {
 	Enabled    bool   `mapstructure:"enabled"`
 	AppID      string `mapstructure:"app_id"`
 	PrivateKey string `mapstructure:"private_key"`

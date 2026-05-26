@@ -23,7 +23,8 @@ import (
 type PaymentChannel string
 
 const (
-	ChannelAlipay      PaymentChannel = "alipay"       // 支付宝
+	ChannelAlipay      PaymentChannel = "alipay"       // 支付宝（中国大陆）
+	ChannelAlipayHK    PaymentChannel = "alipay_hk"    // 支付宝香港版
 	ChannelWeChatPay   PaymentChannel = "wechat_pay"   // 微信支付
 	ChannelPayPal      PaymentChannel = "paypal"        // PayPal
 	ChannelWorldFirst  PaymentChannel = "worldfirst"    // 万里汇
@@ -36,7 +37,7 @@ const (
 
 // SupportedChannels 支持的支付渠道
 var SupportedChannels = []PaymentChannel{
-	ChannelAlipay, ChannelWeChatPay, ChannelPayPal,
+	ChannelAlipay, ChannelAlipayHK, ChannelWeChatPay, ChannelPayPal,
 	ChannelWorldFirst, ChannelPayoneer, ChannelWise,
 	ChannelAirwallex, ChannelStripe, ChannelCrypto,
 }
@@ -61,13 +62,25 @@ var ChannelRegistry = map[PaymentChannel]ChannelInfo{
 	ChannelAlipay: {
 		Channel:  ChannelAlipay,
 		Name:     "Alipay",
-		NameCN:   "支付宝",
+		NameCN:   "支付宝（中国大陆）",
 		Icon:     "/icons/alipay.svg",
 		SupportedCurrencies: []string{"CNY"},
 		MinAmount: map[string]int64{"CNY": 100},       // 1元
 		MaxAmount: map[string]int64{"CNY": 500000000},   // 50万
 		FeeRate:   0.006,                                 // 0.6%
 		Regions:   []string{"CN"},
+		IsGlobal:  false,
+	},
+	ChannelAlipayHK: {
+		Channel:  ChannelAlipayHK,
+		Name:     "AlipayHK",
+		NameCN:   "支付宝香港版",
+		Icon:     "/icons/alipay_hk.svg",
+		SupportedCurrencies: []string{"HKD", "CNY"},
+		MinAmount: map[string]int64{"HKD": 100, "CNY": 100},
+		MaxAmount: map[string]int64{"HKD": 500000000, "CNY": 500000000},
+		FeeRate:   0.006,
+		Regions:   []string{"HK", "CN"},
 		IsGlobal:  false,
 	},
 	ChannelWeChatPay: {
@@ -243,6 +256,7 @@ func NewPaymentService(logger *zap.Logger, rdb *redis.Client, cfg *config.Paymen
 
 	// 注册各支付渠道提供者
 	svc.channels[ChannelAlipay] = &AlipayProvider{}
+	svc.channels[ChannelAlipayHK] = &AlipayHKProvider{}
 	svc.channels[ChannelWeChatPay] = &WeChatPayProvider{}
 	svc.channels[ChannelPayPal] = &PayPalProvider{}
 	svc.channels[ChannelWorldFirst] = &WorldFirstProvider{}
@@ -481,6 +495,10 @@ func (s *PaymentService) getChannelLogo(ch PaymentChannel, defaultIcon string) s
 		if s.config.Alipay.LogoURL != "" {
 			return s.config.Alipay.LogoURL
 		}
+	case ChannelAlipayHK:
+		if s.config.AlipayHK.LogoURL != "" {
+			return s.config.AlipayHK.LogoURL
+		}
 	case ChannelWeChatPay:
 		if s.config.WeChatPay.LogoURL != "" {
 			return s.config.WeChatPay.LogoURL
@@ -605,6 +623,51 @@ func (p *AlipayProvider) QueryOrder(ctx context.Context, orderNo string) (*Payme
 }
 
 func (p *AlipayProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	return nil
+}
+
+// AlipayHKProvider 支付宝香港版
+type AlipayHKProvider struct{}
+
+func (p *AlipayHKProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
+	// 实际实现：调用 AlipayHK API
+	params := url.Values{}
+	params.Set("app_id", "ALIPAYHK_APP_ID")
+	params.Set("method", "alipay.trade.page.pay")
+	params.Set("out_trade_no", order.OrderNo)
+	params.Set("total_amount", fmt.Sprintf("%.2f", float64(order.Amount)/100))
+	params.Set("subject", "TokenHub充值")
+	params.Set("currency", order.Currency)
+
+	order.RedirectURL = "https://openapi.alipay.com.hk/gateway.do?" + params.Encode()
+	order.QRCode = fmt.Sprintf("alipayhk://platformapi/startapp?orderId=%s", order.OrderNo)
+	return order, nil
+}
+
+func (p *AlipayHKProvider) VerifyCallback(data []byte, sign string) (bool, error) {
+	return true, nil
+}
+
+func (p *AlipayHKProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
+	values, err := url.ParseQuery(string(data))
+	if err != nil {
+		return nil, err
+	}
+	return &PaymentCallback{
+		Channel:        ChannelAlipayHK,
+		OrderNo:        values.Get("out_trade_no"),
+		ChannelOrderNo: values.Get("trade_no"),
+		Amount:         parseInt64(values.Get("total_amount")) * 100,
+		Currency:       values.Get("currency"),
+		Status:         PaymentStatusCompleted,
+	}, nil
+}
+
+func (p *AlipayHKProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
+	return nil, nil
+}
+
+func (p *AlipayHKProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
 	return nil
 }
 

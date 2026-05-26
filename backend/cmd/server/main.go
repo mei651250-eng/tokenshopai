@@ -1647,6 +1647,9 @@ func main() {
 		authGroup.POST("/callback/alipay", func(c *gin.Context) {
 			handlePaymentCallback(c, paymentService, payment.ChannelAlipay, logger)
 		})
+		authGroup.POST("/callback/alipay_hk", func(c *gin.Context) {
+			handlePaymentCallback(c, paymentService, payment.ChannelAlipayHK, logger)
+		})
 		authGroup.POST("/callback/wechat", func(c *gin.Context) {
 			handlePaymentCallback(c, paymentService, payment.ChannelWeChatPay, logger)
 		})

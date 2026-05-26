@@ -64,52 +64,60 @@ payment:
     app_id: ""
     private_key: ""
     public_key: ""
-    notify_url: "https://api.tokenhub.com/auth/callback/alipay"
+    notify_url: "https://tokenshopai.com/auth/callback/alipay"
     is_sandbox: true
-    logo_url: "/icons/alipay.svg"   # 自定义 Logo，留空使用默认
+    logo_url: "/icons/alipay.svg"
+  alipay_hk:
+    enabled: true
+    app_id: ""
+    private_key: ""
+    public_key: ""
+    notify_url: "https://tokenshopai.com/auth/callback/alipay_hk"
+    is_sandbox: true
+    logo_url: "/icons/alipay_hk.svg"
   wechat_pay:
     enabled: true
     app_id: ""
     mch_id: ""
     api_key: ""
     cert_path: ""
-    notify_url: "https://api.tokenhub.com/auth/callback/wechat"
+    notify_url: "https://tokenshopai.com/auth/callback/wechat"
     is_sandbox: true
     logo_url: "/icons/wechat_pay.svg"
   paypal:
     enabled: true
     client_id: ""
     client_secret: ""
-    mode: sandbox  # sandbox | live
-    notify_url: "https://api.tokenhub.com/auth/callback/paypal"
+    mode: sandbox
+    notify_url: "https://tokenshopai.com/auth/callback/paypal"
     logo_url: "/icons/paypal.svg"
   worldfirst:
     enabled: true
     merchant_id: ""
     api_key: ""
     api_secret: ""
-    notify_url: "https://api.tokenhub.com/auth/callback/worldfirst"
+    notify_url: "https://tokenshopai.com/auth/callback/worldfirst"
     logo_url: "/icons/worldfirst.svg"
   payoneer:
     enabled: true
     merchant_id: ""
     api_key: ""
     api_secret: ""
-    notify_url: "https://api.tokenhub.com/auth/callback/payoneer"
+    notify_url: "https://tokenshopai.com/auth/callback/payoneer"
     logo_url: "/icons/payoneer.svg"
   wise:
     enabled: true
     api_key: ""
     profile_id: ""
     webhook_secret: ""
-    notify_url: "https://api.tokenhub.com/auth/callback/wise"
+    notify_url: "https://tokenshopai.com/auth/callback/wise"
     logo_url: "/icons/wise.svg"
   stripe:
     enabled: true
     publishable_key: ""
     secret_key: ""
     webhook_secret: ""
-    notify_url: "https://api.tokenhub.com/auth/callback/stripe"
+    notify_url: "https://tokenshopai.com/auth/callback/stripe"
     logo_url: "/icons/stripe.svg"
 
 # 验证码服务配置
