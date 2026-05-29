@@ -68,13 +68,22 @@ export interface ModelConfig {
   name: string
   provider: string
   model_id: string
+  endpoint: string
+  api_key?: string
+  max_tokens: number
   input_price: number
   output_price: number
   currency: string
   enabled: boolean
+  streamable: boolean
   latency_ms: number
   success_rate: number
   weight: number
+  priority: number
+  tenant_id: string
+  tags: string[]
+  created_at: number
+  updated_at: number
 }
 
 export interface MetricsData {
@@ -164,6 +173,11 @@ export const modelApi = {
 export const adminApi = {
   // 模型管理
   getModels: () => api.get('/admin/models'),
+  getModel: (id: string) => api.get(`/admin/models/${id}`),
+  createModel: (data: Partial<ModelConfig>) => api.post('/admin/models', data),
+  updateModel: (id: string, data: Partial<ModelConfig>) => api.put(`/admin/models/${id}`, data),
+  deleteModel: (id: string) => api.delete(`/admin/models/${id}`),
+  toggleModel: (id: string) => api.put(`/admin/models/${id}/toggle`),
   
   // 计费
   getBalance: () => api.get('/admin/billing/balance'),

@@ -251,9 +251,220 @@ func main() {
 	admin := engine.Group("/admin")
 	admin.Use(middleware.AuthMiddleware(jwtManager))
 	{
-		// 模型管理
+		// 模型管理 CRUD
+		// 获取模型列表
 		admin.GET("/models", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"models": modelRouter.GetCircuitStates()})
+			tenantID := c.GetString("tenant_id")
+			var models []gateway.ModelConfig
+			query := db.Where("tenant_id = ? OR tenant_id = ''", tenantID)
+			if err := query.Order("created_at DESC").Find(&models).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// 同时返回熔断器状态
+			circuitStates := modelRouter.GetCircuitStates()
+			c.JSON(http.StatusOK, gin.H{"models": models, "circuit_states": circuitStates})
+		})
+
+		// 获取单个模型
+		admin.GET("/models/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			var model gateway.ModelConfig
+			if err := db.First(&model, "id = ?", id).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "model not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"model": model})
+		})
+
+		// 创建模型
+		admin.POST("/models", func(c *gin.Context) {
+			var req struct {
+				Name        string  `json:"name" binding:"required"`
+				Provider    string  `json:"provider" binding:"required"`
+				ModelID     string  `json:"model_id" binding:"required"`
+				Endpoint    string  `json:"endpoint" binding:"required"`
+				APIKey      string  `json:"api_key"`
+				MaxTokens   int     `json:"max_tokens"`
+				InputPrice  float64 `json:"input_price"`
+				OutputPrice float64 `json:"output_price"`
+				Currency    string  `json:"currency"`
+				Weight      int     `json:"weight"`
+				Priority    int     `json:"priority"`
+				Enabled     bool    `json:"enabled"`
+				Streamable  bool    `json:"streamable"`
+				TenantID    string  `json:"tenant_id"`
+				Tags        []string `json:"tags"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			tenantID := c.GetString("tenant_id")
+			if req.TenantID != "" {
+				tenantID = req.TenantID
+			}
+			if req.Currency == "" {
+				req.Currency = "CNY"
+			}
+			if req.Weight == 0 {
+				req.Weight = 50
+			}
+			if req.MaxTokens == 0 {
+				req.MaxTokens = 4096
+			}
+
+			now := time.Now().Unix()
+			model := &gateway.ModelConfig{
+				ID:          uuid.New().String(),
+				Name:        req.Name,
+				Provider:    gateway.ModelProvider(req.Provider),
+				ModelID:     req.ModelID,
+				Endpoint:    req.Endpoint,
+				MaxTokens:   req.MaxTokens,
+				InputPrice:  req.InputPrice,
+				OutputPrice: req.OutputPrice,
+				Currency:    req.Currency,
+				Weight:      req.Weight,
+				Priority:    req.Priority,
+				Enabled:     req.Enabled,
+				Streamable:  req.Streamable,
+				TenantID:    tenantID,
+				Tags:        req.Tags,
+				LatencyMs:   0,
+				SuccessRate: 1.0,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}
+
+			// 加密存储API Key
+			if req.APIKey != "" {
+				if err := keyVault.StoreKey(c.Request.Context(), "model_"+model.ID, req.APIKey); err != nil {
+					// 如果keyvault不可用，明文存储（仅开发环境）
+					model.APIKeyEnc = req.APIKey
+				} else {
+					model.APIKeyEnc = "encrypted:model_" + model.ID
+				}
+			}
+
+			if err := db.Create(model).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// 注册到内存路由器
+			model.APIKey = req.APIKey
+			modelRouter.RegisterModel(model)
+
+			logger.Info("model created", zap.String("name", model.Name), zap.String("provider", string(model.Provider)))
+			c.JSON(http.StatusOK, gin.H{"message": "model created", "model": model})
+		})
+
+		// 更新模型
+		admin.PUT("/models/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			var model gateway.ModelConfig
+			if err := db.First(&model, "id = ?", id).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "model not found"})
+				return
+			}
+
+			var updates map[string]interface{}
+			if err := c.ShouldBindJSON(&updates); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			// 白名单过滤
+			allowedFields := map[string]bool{
+				"name": true, "provider": true, "model_id": true, "endpoint": true,
+				"max_tokens": true, "input_price": true, "output_price": true,
+				"currency": true, "weight": true, "priority": true,
+				"enabled": true, "streamable": true, "tags": true,
+			}
+			filtered := make(map[string]interface{})
+			for k, v := range updates {
+				if allowedFields[k] {
+					filtered[k] = v
+				}
+			}
+
+			// 处理API Key更新
+			if apiKey, ok := updates["api_key"].(string); ok && apiKey != "" {
+				if err := keyVault.StoreKey(c.Request.Context(), "model_"+id, apiKey); err != nil {
+					filtered["api_key_enc"] = apiKey
+				} else {
+					filtered["api_key_enc"] = "encrypted:model_" + id
+				}
+			}
+
+			filtered["updated_at"] = time.Now().Unix()
+
+			if len(filtered) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "no valid fields to update"})
+				return
+			}
+
+			if err := db.Model(&gateway.ModelConfig{}).Where("id = ?", id).Updates(filtered).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// 更新内存路由器
+			db.First(&model, "id = ?", id)
+			modelRouter.UnregisterModel(model.ID)
+			if model.Enabled {
+				modelRouter.RegisterModel(&model)
+			}
+
+			c.JSON(http.StatusOK, gin.H{"message": "model updated", "model": model})
+		})
+
+		// 删除模型
+		admin.DELETE("/models/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			var model gateway.ModelConfig
+			if err := db.First(&model, "id = ?", id).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "model not found"})
+				return
+			}
+
+			if err := db.Delete(&model).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// 从内存路由器注销
+			modelRouter.UnregisterModel(model.ID)
+
+			c.JSON(http.StatusOK, gin.H{"message": "model deleted"})
+		})
+
+		// 切换模型启用状态
+		admin.PUT("/models/:id/toggle", func(c *gin.Context) {
+			id := c.Param("id")
+			var model gateway.ModelConfig
+			if err := db.First(&model, "id = ?", id).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "model not found"})
+				return
+			}
+
+			newEnabled := !model.Enabled
+			db.Model(&gateway.ModelConfig{}).Where("id = ?", id).Updates(map[string]interface{}{
+				"enabled":    newEnabled,
+				"updated_at": time.Now().Unix(),
+			})
+
+			// 更新内存路由器
+			if newEnabled {
+				model.Enabled = true
+				modelRouter.RegisterModel(&model)
+			} else {
+				modelRouter.UnregisterModel(model.ID)
+			}
+
+			c.JSON(http.StatusOK, gin.H{"message": "model toggled", "enabled": newEnabled})
 		})
 
 		// 计费
@@ -1752,6 +1963,7 @@ func autoMigrate(db *gorm.DB, logger *zap.Logger) {
 		&wallet.WalletBinding{},
 		&wallet.CryptoDepositOrder{},
 		&payment.PaymentOrder{},
+		&gateway.ModelConfig{},
 	); err != nil {
 		logger.Fatal("Failed to auto migrate database", zap.Error(err))
 	}
@@ -1968,9 +2180,23 @@ func handleStreamResponse(
 }
 
 func handleListModels(c *gin.Context, router *smartrouter.ModelRouter) {
+	// 从路由器获取已注册的模型列表
+	models := router.GetAllModels()
+	data := make([]interface{}, 0, len(models))
+	for _, m := range models {
+		if m.Enabled {
+			data = append(data, gin.H{
+				"id":       m.ID,
+				"object":   "model",
+				"created":  m.CreatedAt,
+				"owned_by": string(m.Provider),
+				"name":     m.Name,
+			})
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   []interface{}{},
+		"data":   data,
 	})
 }
 

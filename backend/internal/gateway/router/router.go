@@ -185,3 +185,15 @@ func (r *ModelRouter) getModelInstances(modelName, tenantID string) []*gateway.M
 func (r *ModelRouter) GetCircuitStates() map[string]string {
 	return r.fallback.GetCircuitStates()
 }
+
+// GetAllModels 获取所有已注册模型
+func (r *ModelRouter) GetAllModels() []*gateway.ModelConfig {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var all []*gateway.ModelConfig
+	for _, instances := range r.models {
+		all = append(all, instances...)
+	}
+	return all
+}
