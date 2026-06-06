@@ -2111,7 +2111,7 @@ func main() {
 			// 标记已使用
 			db.Model(&rc).Updates(map[string]interface{}{"status": "used", "used_by": userID, "used_at": time.Now()})
 			// 充值
-			if err := billingService.TopUp(c.Request.Context(), tenantID, userID, rc.Amount); err != nil {
+			if err := billingService.TopUp(c.Request.Context(), tenantID, userID, int64(rc.Amount*100)); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -3399,7 +3399,7 @@ func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.D
 	}
 
 	// 生成 JWT
-	tokenPair, err := jwtManager.GenerateTokenPair(user.ID, user.TenantID, string(user.Role), user.Email)
+	tokenPair, err := jwtManager.GenerateTokenPair(user.ID, user.TenantID, user.Role, user.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
