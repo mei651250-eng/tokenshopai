@@ -151,11 +151,11 @@ verification:
   email:
     provider: smtp  # smtp | sendgrid
     smtp:
-      host: "smtp.tokenhub.com"
+      host: "smtp.tokenshopai.com"
       port: 465
       username: ""
       password: ""
-      from_address: "noreply@tokenhub.com"
+      from_address: "noreply@tokenshopai.com"
       from_name: "TokenHub"
     sendgrid:
       api_key: ""

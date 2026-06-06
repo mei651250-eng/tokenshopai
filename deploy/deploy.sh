@@ -6,12 +6,12 @@
 set -e
 
 # ===== 配置 =====
-DOMAIN="${1:-tokenhub.com}"
-ADMIN_EMAIL="${2:-admin@tokenhub.com}"
+DOMAIN="${1:-tokenshopai.com}"
+ADMIN_EMAIL="${2:-admin@tokenshopai.com}"
 ADMIN_PASSWORD="${3:-Admin@2026}"
 DB_PASSWORD="$(openssl rand -hex 16)"
 JWT_SECRET="$(openssl rand -hex 32)"
-INSTALL_DIR="/opt/tokenhub"
+INSTALL_DIR="/root/tokenhub"
 
 echo "=========================================="
 echo "  TokenHub 部署脚本"
@@ -69,9 +69,9 @@ VITE_API_BASE_URL="" npm run build
 
 # ===== 6. 配置应用 =====
 echo "[6/8] 配置应用..."
-mkdir -p /var/www/tokenhub/frontend
+mkdir -p /var/www/tokenhub/frontend/dist
 mkdir -p /var/www/tokenhub/uploads/avatars
-cp -r ${INSTALL_DIR}/frontend/dist/* /var/www/tokenhub/frontend/
+cp -r ${INSTALL_DIR}/frontend/dist/* /var/www/tokenhub/frontend/dist/
 cp ${INSTALL_DIR}/backend/tokenhub-server /usr/local/bin/
 
 # 写入配置文件

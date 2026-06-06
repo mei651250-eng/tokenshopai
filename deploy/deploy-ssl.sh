@@ -6,9 +6,9 @@
 # ============================================================
 set -e
 
-DOMAIN="${1:-tokenhub.com}"
+DOMAIN="${1:-tokenshopai.com}"
 EMAIL="${2:-admin@${DOMAIN}}"
-INSTALL_DIR="/opt/tokenhub"
+INSTALL_DIR="/root/tokenhub"
 
 echo "=========================================="
 echo "  TokenHub SSL 证书配置"
@@ -19,7 +19,17 @@ echo "=========================================="
 # ===== 1. 检查 DNS 解析 =====
 echo "[1/5] 检查 DNS 解析..."
 SERVER_IP=$(curl -s ifconfig.me)
-DOMAIN_IP=$(dig +short ${DOMAIN} | tail -1)
+
+# 兼容没有 dig 的系统
+if command -v dig &> /dev/null; then
+    DOMAIN_IP=$(dig +short ${DOMAIN} | tail -1)
+elif command -v nslookup &> /dev/null; then
+    DOMAIN_IP=$(nslookup ${DOMAIN} 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | tail -1)
+elif command -v host &> /dev/null; then
+    DOMAIN_IP=$(host -t A ${DOMAIN} 2>/dev/null | head -1 | awk '{print $NF}')
+else
+    DOMAIN_IP=$(getent hosts ${DOMAIN} 2>/dev/null | awk '{print $1}')
+fi
 
 if [ -z "$DOMAIN_IP" ]; then
     echo "❌ DNS 未解析！请先将 ${DOMAIN} 指向 ${SERVER_IP}"
@@ -31,7 +41,15 @@ if [ -z "$DOMAIN_IP" ]; then
     echo "   类型: A    名称: www  内容: ${SERVER_IP}    代理: DNS only"
     echo ""
     read -p "DNS 已配置好？按回车继续或 Ctrl+C 退出..."
-    DOMAIN_IP=$(dig +short ${DOMAIN} | tail -1)
+    if command -v dig &> /dev/null; then
+        DOMAIN_IP=$(dig +short ${DOMAIN} | tail -1)
+    elif command -v nslookup &> /dev/null; then
+        DOMAIN_IP=$(nslookup ${DOMAIN} 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | tail -1)
+    elif command -v host &> /dev/null; then
+        DOMAIN_IP=$(host -t A ${DOMAIN} 2>/dev/null | head -1 | awk '{print $NF}')
+    else
+        DOMAIN_IP=$(getent hosts ${DOMAIN} 2>/dev/null | awk '{print $1}')
+    fi
 fi
 
 if [ "$DOMAIN_IP" != "$SERVER_IP" ]; then

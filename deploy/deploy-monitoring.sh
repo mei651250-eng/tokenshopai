@@ -7,9 +7,9 @@
 # ============================================================
 set -e
 
-DOMAIN="${1:-tokenhub.com}"
-INSTALL_DIR="/opt/tokenhub"
-MONITOR_DIR="/opt/tokenhub/monitoring"
+DOMAIN="${1:-tokenshopai.com}"
+INSTALL_DIR="/root/tokenhub"
+MONITOR_DIR="/root/tokenhub/monitoring"
 
 echo "=========================================="
 echo "  TokenHub 监控告警部署"
@@ -445,7 +445,8 @@ curl -s http://localhost:3000/api/health > /dev/null && echo "✅ Grafana 运行
 # ===== 配置 Nginx 代理 Grafana =====
 echo ""
 echo "配置 Nginx 代理监控面板..."
-NGINX_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
+NGINX_CONF="/etc/nginx/conf.d/tokenhub.conf"
+[ ! -f "$NGINX_CONF" ] && NGINX_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
 [ ! -f "$NGINX_CONF" ] && NGINX_CONF="/etc/nginx/sites-available/${DOMAIN}"
 
 if [ -f "$NGINX_CONF" ] && ! grep -q "/grafana/" "$NGINX_CONF"; then

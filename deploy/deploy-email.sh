@@ -9,7 +9,7 @@
 set -e
 
 PROVIDER="${1:-smtp}"
-INSTALL_DIR="/opt/tokenhub"
+INSTALL_DIR="/root/tokenhub"
 CONFIG_FILE="${INSTALL_DIR}/configs/config.yaml"
 
 echo "=========================================="
