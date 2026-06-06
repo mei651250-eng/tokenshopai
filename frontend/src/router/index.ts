@@ -17,6 +17,12 @@ declare module 'vue-router' {
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/',
+    name: 'Landing',
+    component: () => import('@/views/landing/LandingView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('@/views/LoginView.vue'),
@@ -35,7 +41,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: false },
   },
   {
-    path: '/',
+    path: '/dashboard',
     component: () => import('@/components/layout/AdminLayout.vue'),
     meta: { requiresAuth: true },
     children: [
@@ -45,126 +51,126 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/dashboard/DashboardView.vue'),
       },
       {
-        path: 'models',
+        path: '/models',
         name: 'Models',
         component: () => import('@/views/models/ModelListView.vue'),
         meta: { permission: 'model:list' },
       },
       {
-        path: 'models/:id',
+        path: '/models/:id',
         name: 'ModelDetail',
         component: () => import('@/views/models/ModelDetailView.vue'),
         meta: { permission: 'model:list' },
       },
       {
-        path: 'billing',
+        path: '/billing',
         name: 'Billing',
         component: () => import('@/views/billing/BillingView.vue'),
         meta: { permission: 'billing:view' },
       },
       {
-        path: 'billing/transactions',
+        path: '/billing/transactions',
         name: 'Transactions',
         component: () => import('@/views/billing/TransactionView.vue'),
         meta: { permission: 'billing:view' },
       },
       {
-        path: 'wallet',
+        path: '/wallet',
         name: 'Wallet',
         component: () => import('@/views/wallet/WalletView.vue'),
       },
       {
-        path: 'payment',
+        path: '/payment',
         name: 'Payment',
         component: () => import('@/views/payment/PaymentView.vue'),
       },
       {
-        path: 'receiving',
+        path: '/receiving',
         name: 'Receiving',
         component: () => import('@/views/finance/ReceivingAccountView.vue'),
       },
       {
-        path: 'withdrawal',
+        path: '/withdrawal',
         name: 'Withdrawal',
         component: () => import('@/views/finance/WithdrawalView.vue'),
       },
       {
-        path: 'tenants',
+        path: '/tenants',
         name: 'Tenants',
         component: () => import('@/views/tenants/TenantListView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
       },
       {
-        path: 'tenants/:id',
+        path: '/tenants/:id',
         name: 'TenantDetail',
         component: () => import('@/views/tenants/TenantDetailView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
       },
       {
-        path: 'users',
+        path: '/users',
         name: 'Users',
         component: () => import('@/views/users/UserManagementView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'], permission: 'user:create' },
       },
       {
-        path: 'audit',
+        path: '/audit',
         name: 'AuditLog',
         component: () => import('@/views/audit/AuditLogView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
       },
       {
-        path: 'security',
+        path: '/security',
         name: 'Security',
         component: () => import('@/views/security/SecurityView.vue'),
         meta: { roles: ['super_admin'], permission: 'security:view' },
       },
       {
-        path: 'monitor',
+        path: '/monitor',
         name: 'Monitor',
         component: () => import('@/views/monitor/MonitorView.vue'),
         meta: { permission: 'monitor:view' },
       },
       {
-        path: 'reports',
+        path: '/reports',
         name: 'Reports',
         component: () => import('@/views/reports/ReportView.vue'),
         meta: { permission: 'report:view' },
       },
       {
-        path: 'settings',
+        path: '/settings',
         name: 'Settings',
         component: () => import('@/views/settings/SettingsView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
       },
       {
-        path: 'profile',
+        path: '/profile',
         name: 'Profile',
         component: () => import('@/views/profile/ProfileView.vue'),
       },
       {
-        path: 'notifications',
+        path: '/notifications',
         name: 'Notifications',
         component: () => import('@/views/notifications/NotificationCenterView.vue'),
       },
       {
-        path: 'quota',
+        path: '/quota',
         name: 'QuotaManagement',
         component: () => import('@/views/quota/QuotaManagementView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
       },
       {
-        path: 'refund',
+        path: '/refund',
         name: 'RefundManagement',
         component: () => import('@/views/refund/RefundManagementView.vue'),
       },
       {
-        path: 'reconciliation',
+        path: '/reconciliation',
         name: 'Reconciliation',
         component: () => import('@/views/reconciliation/ReconciliationView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
       },
       {
-        path: 'distribution',
+        path: '/distribution',
         name: 'Distribution',
         component: () => import('@/views/distribution/DistributionView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
@@ -225,8 +231,8 @@ router.beforeEach((to, _from, next) => {
     return
   }
 
-  // 已登录访问登录页，重定向到首页
-  if (to.name === 'Login' && token) {
+  // 已登录访问着陆页或登录页，重定向到控制台
+  if ((to.name === 'Landing' || to.name === 'Login') && token) {
     next({ name: 'Dashboard' })
     return
   }

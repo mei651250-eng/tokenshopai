@@ -5,10 +5,12 @@
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 animate-fade-in-up">
         <!-- Header -->
         <div class="text-center mb-8">
-          <div class="w-16 h-16 rounded-2xl bg-brand mx-auto flex items-center justify-center mb-4">
-            <span class="text-white text-2xl font-bold">T</span>
-          </div>
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Token中站站</h1>
+          <router-link to="/" class="inline-block">
+            <div class="w-16 h-16 rounded-2xl bg-brand mx-auto flex items-center justify-center mb-4">
+              <span class="text-white text-2xl font-bold">T</span>
+            </div>
+          </router-link>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">TokenHub</h1>
           <p class="text-gray-500 mt-1">企业级 AI API 网关</p>
         </div>
 
@@ -47,6 +49,8 @@
 
         <!-- Footer -->
         <div class="mt-6 text-center text-sm text-gray-500">
+          <router-link to="/" class="text-primary-600 hover:text-primary-700 font-medium">← 返回首页</router-link>
+          <span class="mx-2">|</span>
           <span>还没有账号？</span>
           <a href="#" class="text-primary-600 hover:text-primary-700 font-medium">注册</a>
         </div>

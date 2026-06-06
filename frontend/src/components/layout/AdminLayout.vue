@@ -11,7 +11,7 @@
           <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center flex-shrink-0">
             <span class="text-white font-bold text-sm">T</span>
           </div>
-          <span v-if="!appStore.sidebarCollapsed" class="font-bold text-lg text-gray-900 dark:text-white">Token中站站</span>
+          <span v-if="!appStore.sidebarCollapsed" class="font-bold text-lg text-gray-900 dark:text-white">TokenHub</span>
         </div>
       </div>
 
@@ -282,7 +282,7 @@ const showSearch = ref(false)
 const searchQuery = ref('')
 
 const navItems = computed(() => [
-  { path: '/', label: t('nav.dashboard'), icon: DataBoard },
+  { path: '/dashboard', label: t('nav.dashboard'), icon: DataBoard },
   { path: '/models', label: t('nav.models'), icon: SetUp },
   { path: '/billing', label: t('nav.billing'), icon: Money },
   { path: '/wallet', label: t('nav.wallet'), icon: Wallet },
@@ -354,7 +354,7 @@ function closeTab(path: string) {
   appStore.removeTab(path)
   if (route.path === path) {
     const remaining = appStore.openedTabs
-    router.push(remaining.length > 0 ? remaining[remaining.length - 1].path : '/')
+    router.push(remaining.length > 0 ? remaining[remaining.length - 1].path : '/dashboard')
   }
 }
 
