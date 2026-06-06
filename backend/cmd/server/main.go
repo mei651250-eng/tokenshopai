@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -439,6 +440,63 @@ func main() {
 			modelRouter.UnregisterModel(model.ID)
 
 			c.JSON(http.StatusOK, gin.H{"message": "model deleted"})
+		})
+
+		// 发现厂商可用模型
+		admin.POST("/models/discover", func(c *gin.Context) {
+			var req struct {
+				Endpoint string `json:"endpoint" binding:"required"`
+				APIKey   string `json:"api_key"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "endpoint is required"})
+				return
+			}
+
+			// 构造厂商 /v1/models 请求
+			modelsURL := strings.TrimRight(req.Endpoint, "/") + "/models"
+			httpReq, _ := http.NewRequestWithContext(c.Request.Context(), "GET", modelsURL, nil)
+			if req.APIKey != "" {
+				httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+			}
+			httpReq.Header.Set("Accept", "application/json")
+
+			client := &http.Client{Timeout: 15 * time.Second}
+			resp, err := client.Do(httpReq)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "failed to connect provider: " + err.Error()})
+				return
+			}
+			defer resp.Body.Close()
+
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusOK {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "provider returned " + resp.Status, "detail": string(body)})
+				return
+			}
+
+			// 解析 OpenAI 格式响应: {"data": [{"id":"model-name","owned_by":"..."},...]}
+			var result struct {
+				Data []struct {
+					ID      string `json:"id"`
+					Object  string `json:"object"`
+					OwnedBy string `json:"owned_by"`
+					Created int64  `json:"created"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &result); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse provider response"})
+				return
+			}
+
+			models := make([]gin.H{}, 0, len(result.Data))
+			for _, m := range result.Data {
+				models = append(models, gin.H{
+					"id":       m.ID,
+					"owned_by": m.OwnedBy,
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"models": models})
 		})
 
 		// 切换模型启用状态

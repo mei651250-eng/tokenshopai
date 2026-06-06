@@ -178,6 +178,7 @@ export const adminApi = {
   updateModel: (id: string, data: Partial<ModelConfig>) => api.put(`/admin/models/${id}`, data),
   deleteModel: (id: string) => api.delete(`/admin/models/${id}`),
   toggleModel: (id: string) => api.put(`/admin/models/${id}/toggle`),
+  discoverModels: (endpoint: string, apiKey?: string) => api.post('/admin/models/discover', { endpoint, api_key: apiKey || '' }),
   
   // 计费
   getBalance: () => api.get('/admin/billing/balance'),

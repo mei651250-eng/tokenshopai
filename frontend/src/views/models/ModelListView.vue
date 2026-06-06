@@ -54,19 +54,24 @@
           </el-select>
         </el-form-item>
         <el-form-item label="模型型号">
-          <el-select
-            v-model="formData.model_id"
-            class="w-full"
-            filterable
-            allow-create
-            :disabled="isEdit"
-            placeholder="选择或输入模型ID"
-            @change="onModelSelect"
-          >
-            <el-option-group v-for="group in currentModelGroups" :key="group.label" :label="group.label">
-              <el-option v-for="m in group.models" :key="m.id" :label="m.id + (m.note ? ' (' + m.note + ')' : '')" :value="m.id" />
-            </el-option-group>
-          </el-select>
+          <div class="flex gap-2 w-full">
+            <el-select
+              v-model="formData.model_id"
+              class="flex-1"
+              filterable
+              allow-create
+              :disabled="isEdit"
+              placeholder="选择或输入模型ID"
+              @change="onModelSelect"
+            >
+              <el-option-group v-for="group in currentModelGroups" :key="group.label" :label="group.label">
+                <el-option v-for="m in group.models" :key="m.id" :label="m.id + (m.note ? ' (' + m.note + ')' : '')" :value="m.id" />
+              </el-option-group>
+            </el-select>
+            <el-button type="success" :loading="discovering" :disabled="isEdit || !formData.endpoint" @click="discoverModels">
+              {{ discovering ? '发现中...' : '自动发现' }}
+            </el-button>
+          </div>
         </el-form-item>
         <el-form-item :label="t('model.name')">
           <el-input v-model="formData.name" placeholder="显示名称，默认与模型ID相同" />
@@ -75,7 +80,7 @@
           <el-input v-model="formData.endpoint" placeholder="API端点URL" />
         </el-form-item>
         <el-form-item label="API Key">
-          <el-input v-model="formData.api_key" type="password" show-password :placeholder="isEdit ? '留空则不修改' : '输入API Key'" />
+          <el-input v-model="formData.api_key" type="password" show-password :placeholder="isEdit ? '留空则不修改' : '输入API Key后可自动发现模型'" @change="onApiKeyChange" />
         </el-form-item>
         <el-form-item :label="t('model.inputPrice')">
           <el-input-number v-model="formData.input_price" :min="0" :precision="4" />
@@ -614,20 +619,69 @@ const providerConfigs: Record<string, ProviderConfig> = {
   },
 }
 
-// 当前供应商的模型分组
+// 当前供应商的模型分组（优先使用动态发现的结果，否则用静态配置）
+const discoveredModels = ref<string[]>([])
+const discovering = ref(false)
+
 const currentModelGroups = computed<ModelGroup[]>(() => {
+  // 如果有动态发现的模型，合并到静态配置中
+  if (discoveredModels.value.length > 0) {
+    const staticConfig = providerConfigs[formData.provider]
+    const staticIds = new Set<string>()
+    if (staticConfig) {
+      for (const g of staticConfig.models) {
+        for (const m of g.models) staticIds.add(m.id)
+      }
+    }
+    // 找出静态配置中没有的新模型
+    const newIds = discoveredModels.value.filter(id => !staticIds.has(id))
+    const groups: ModelGroup[] = staticConfig ? [...staticConfig.models] : []
+    if (newIds.length > 0) {
+      groups.push({ label: '🔌 自动发现的新模型', models: newIds.map(id => ({ id })) })
+    }
+    return groups
+  }
   const config = providerConfigs[formData.provider]
   return config ? config.models : []
 })
 
+// 从厂商 API 自动发现模型
+async function discoverModels() {
+  if (!formData.endpoint) {
+    ElMessage.warning('请先选择厂商或填写 API 端点')
+    return
+  }
+  discovering.value = true
+  try {
+    const res: any = await adminApi.discoverModels(formData.endpoint, formData.api_key)
+    const models: Array<{ id: string; owned_by?: string }> = res.models || []
+    discoveredModels.value = models.map(m => m.id)
+    if (models.length === 0) {
+      ElMessage.info('该厂商未返回可用模型，请手动输入')
+    } else {
+      ElMessage.success(`发现 ${models.length} 个可用模型`)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || '无法连接厂商 API，请检查端点和密钥')
+    discoveredModels.value = []
+  } finally {
+    discovering.value = false
+  }
+}
+
 // 供应商变更时自动填充
-function onProviderChange(provider: string) {
+async function onProviderChange(provider: string) {
   const config = providerConfigs[provider]
   if (config) {
     formData.endpoint = config.endpoint
   }
   formData.model_id = ''
   formData.name = ''
+  discoveredModels.value = []
+  // 如果有 API Key 且端点已知，自动发现模型
+  if (formData.api_key && formData.endpoint && provider !== 'custom') {
+    await discoverModels()
+  }
 }
 
 // 选择模型时自动填充
@@ -687,7 +741,15 @@ function openCreateDialog() {
   isEdit.value = false
   editingId.value = ''
   Object.assign(formData, defaultForm())
+  discoveredModels.value = []
   showDialog.value = true
+}
+
+// API Key 变化时自动发现模型
+async function onApiKeyChange() {
+  if (formData.api_key && formData.endpoint && formData.provider !== 'custom' && !isEdit.value) {
+    await discoverModels()
+  }
 }
 
 function openEditDialog(row: ModelConfig) {
