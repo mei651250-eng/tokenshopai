@@ -170,6 +170,11 @@ export const modelApi = {
   chat: (data: ChatCompletionRequest) => api.post('/v1/chat/completions', data),
 }
 
+// 公开 API（无需认证）
+export const publicApi = {
+  getModels: (provider?: string) => api.get('/public/models', { params: { provider } }),
+}
+
 export const adminApi = {
   // 模型管理
   getModels: () => api.get('/admin/models'),
@@ -194,6 +199,13 @@ export const adminApi = {
   // 人脸识别凭据管理
   faceCredentials: () => api.get('/admin/face/credentials'),
   removeFaceCredential: (id: string) => api.delete(`/admin/face/credentials/${id}`),
+
+  // API Key 管理
+  getApiKeys: () => api.get('/admin/apikeys'),
+  createApiKey: (data: { name: string; permissions?: string[]; models?: string[]; rate_limit?: number; quota_daily?: number; expires_at?: string }) =>
+    api.post('/admin/apikeys', data),
+  revokeApiKey: (id: string) => api.put(`/admin/apikeys/${id}/revoke`),
+  deleteApiKey: (id: string) => api.delete(`/admin/apikeys/${id}`),
 }
 
 // 钱包 API

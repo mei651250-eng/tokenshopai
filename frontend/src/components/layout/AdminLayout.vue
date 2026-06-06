@@ -269,6 +269,7 @@ import {
   Bell, User, SwitchButton, Close,
   User as UserIcon, Key, Tickets, Promotion,
   TrendCharts, Histogram, Connection, CircleCheck,
+  Reading, ShoppingCart,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -283,6 +284,9 @@ const searchQuery = ref('')
 
 const navItems = computed(() => [
   { path: '/dashboard', label: t('nav.dashboard'), icon: DataBoard },
+  { path: '/apikeys', label: 'API 密钥', icon: Key },
+  { path: '/marketplace', label: '模型广场', icon: ShoppingCart },
+  { path: '/docs', label: 'API 文档', icon: Reading },
   { path: '/models', label: t('nav.models'), icon: SetUp },
   { path: '/billing', label: t('nav.billing'), icon: Money },
   { path: '/wallet', label: t('nav.wallet'), icon: Wallet },

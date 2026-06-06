@@ -51,6 +51,21 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/dashboard/DashboardView.vue'),
       },
       {
+        path: '/apikeys',
+        name: 'ApiKeys',
+        component: () => import('@/views/apikeys/ApiKeyView.vue'),
+      },
+      {
+        path: '/marketplace',
+        name: 'Marketplace',
+        component: () => import('@/views/marketplace/MarketplaceView.vue'),
+      },
+      {
+        path: '/docs',
+        name: 'Docs',
+        component: () => import('@/views/docs/DocsView.vue'),
+      },
+      {
         path: '/models',
         name: 'Models',
         component: () => import('@/views/models/ModelListView.vue'),

@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -1875,7 +1878,156 @@ func main() {
 			c.Header("Content-Disposition", "attachment; filename=report.csv")
 			c.String(http.StatusOK, "report export placeholder\n")
 		})
+
+		// ============ API Key 管理 ============
+		// 列出当前用户的 API Keys
+		admin.GET("/apikeys", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			var keys []auth.APIKey
+			query := db.Where("user_id = ? AND tenant_id = ?", userID, tenantID)
+			if err := query.Order("created_at DESC").Find(&keys).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// 脱敏：不返回 key_hash
+			type APIKeySafe struct {
+				ID          string           `json:"id"`
+				Name        string           `json:"name"`
+				KeyPrefix   string           `json:"key_prefix"`
+				Permissions []auth.Permission `json:"permissions"`
+				Models      []string         `json:"models"`
+				RateLimit   int              `json:"rate_limit"`
+				QuotaDaily  int64            `json:"quota_daily"`
+				Status      auth.APIKeyStatus `json:"status"`
+				ExpiresAt   *time.Time       `json:"expires_at,omitempty"`
+				CreatedAt   time.Time        `json:"created_at"`
+				LastUsedAt  *time.Time       `json:"last_used_at,omitempty"`
+			}
+			safe := make([]APIKeySafe, 0, len(keys))
+			for _, k := range keys {
+				safe = append(safe, APIKeySafe{
+					ID:          k.ID,
+					Name:        k.Name,
+					KeyPrefix:   k.KeyPrefix,
+					Permissions: k.Permissions,
+					Models:      k.Models,
+					RateLimit:   k.RateLimit,
+					QuotaDaily:  k.QuotaDaily,
+					Status:      k.Status,
+					ExpiresAt:   k.ExpiresAt,
+					CreatedAt:   k.CreatedAt,
+					LastUsedAt:  k.LastUsedAt,
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"data": safe})
+		})
+
+		// 创建 API Key
+		admin.POST("/apikeys", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			var req struct {
+				Name        string           `json:"name" binding:"required"`
+				Permissions []auth.Permission `json:"permissions"`
+				Models      []string         `json:"models"`
+				RateLimit   int              `json:"rate_limit"`
+				QuotaDaily  int64            `json:"quota_daily"`
+				ExpiresAt   *time.Time       `json:"expires_at"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			// 生成 sk- 前缀的 API Key
+			rawKey := "sk-" + generateSecureRandom(48)
+			hash := sha256.Sum256([]byte(rawKey))
+			keyHash := hex.EncodeToString(hash[:])
+			prefix := rawKey[:8]
+
+			if req.Permissions == nil {
+				req.Permissions = []auth.Permission{auth.PermModelRoute}
+			}
+			if req.RateLimit == 0 {
+				req.RateLimit = 60
+			}
+			if req.QuotaDaily == 0 {
+				req.QuotaDaily = 1000000
+			}
+
+			apiKey := &auth.APIKey{
+				ID:          uuid.New().String(),
+				TenantID:    tenantID,
+				UserID:      userID,
+				Name:        req.Name,
+				KeyHash:     keyHash,
+				KeyPrefix:   prefix,
+				Permissions: req.Permissions,
+				Models:      req.Models,
+				RateLimit:   req.RateLimit,
+				QuotaDaily:  req.QuotaDaily,
+				Status:      auth.APIKeyActive,
+				ExpiresAt:   req.ExpiresAt,
+				CreatedAt:   time.Now(),
+			}
+			if err := db.Create(apiKey).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// 只在创建时返回完整 Key
+			c.JSON(http.StatusOK, gin.H{
+				"data": gin.H{
+					"id":         apiKey.ID,
+					"name":       apiKey.Name,
+					"key":        rawKey,
+					"key_prefix": prefix,
+					"status":     apiKey.Status,
+					"created_at": apiKey.CreatedAt,
+				},
+				"warning": "请妥善保存此 API Key，系统不会再次显示完整密钥",
+			})
+		})
+
+		// 吊销 API Key
+		admin.PUT("/apikeys/:id/revoke", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			id := c.Param("id")
+			result := db.Model(&auth.APIKey{}).Where("id = ? AND user_id = ? AND tenant_id = ?", id, userID, tenantID).Update("status", auth.APIKeyRevoked)
+			if result.RowsAffected == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "API Key not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "API Key revoked"})
+		})
+
+		// 删除 API Key
+		admin.DELETE("/apikeys/:id", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			id := c.Param("id")
+			result := db.Where("id = ? AND user_id = ? AND tenant_id = ?", id, userID, tenantID).Delete(&auth.APIKey{})
+			if result.RowsAffected == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "API Key not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "API Key deleted"})
+		})
 	}
+
+	// 公开模型广场接口（无需认证）
+	engine.GET("/public/models", func(c *gin.Context) {
+		var models []gateway.ModelConfig
+		query := db.Where("enabled = ?", true)
+		if provider := c.Query("provider"); provider != "" {
+			query = query.Where("provider = ?", provider)
+		}
+		if err := query.Select("id, name, provider, model_id, input_price, output_price, currency, max_tokens, tags, streamable, latency_ms, success_rate, created_at").Order("provider, name").Find(&models).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": models})
+	})
 
 	// 认证接口（无需JWT）
 	authGroup := engine.Group("/auth")
@@ -1976,6 +2128,16 @@ func main() {
 	}
 
 	logger.Info("server exited")
+}
+
+// generateSecureRandom 生成安全的随机十六进制字符串
+func generateSecureRandom(length int) string {
+	b := make([]byte, length/2+1)
+	if _, err := rand.Read(b); err != nil {
+		// fallback to uuid
+		return uuid.New().String() + uuid.New().String()
+	}
+	return hex.EncodeToString(b)[:length]
 }
 
 func initLogger(mode string) *zap.Logger {
