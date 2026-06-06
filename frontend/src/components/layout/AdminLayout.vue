@@ -269,7 +269,7 @@ import {
   Bell, User, SwitchButton, Close,
   User as UserIcon, Key, Tickets, Promotion,
   TrendCharts, Histogram, Connection, CircleCheck,
-  Reading, ShoppingCart,
+  Reading, ShoppingCart, Present, Notification, Operation, UserFilled, Share,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -297,6 +297,11 @@ const navItems = computed(() => [
   { path: '/refund', label: '退款管理', icon: CircleCheck },
   { path: '/reconciliation', label: '对账中心', icon: TrendCharts },
   { path: '/distribution', label: '分销管理', icon: Connection },
+  { path: '/redeem-codes', label: '兑换码', icon: Present },
+  { path: '/announcements', label: '公告管理', icon: Notification },
+  { path: '/model-mappings', label: '模型映射', icon: Operation },
+  { path: '/user-groups', label: '用户组', icon: UserFilled },
+  { path: '/referrals', label: '邀请奖励', icon: Share },
   { path: '/tenants', label: t('nav.tenants'), icon: OfficeBuilding },
   { path: '/users', label: t('nav.users'), icon: UserIcon },
   { path: '/audit', label: t('nav.audit'), icon: Tickets },

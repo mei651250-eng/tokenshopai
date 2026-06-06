@@ -41,6 +41,24 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: false },
   },
   {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/auth/RegisterView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/terms',
+    name: 'Terms',
+    component: () => import('@/views/legal/TermsView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/privacy',
+    name: 'Privacy',
+    component: () => import('@/views/legal/PrivacyView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
     path: '/dashboard',
     component: () => import('@/components/layout/AdminLayout.vue'),
     meta: { requiresAuth: true },
@@ -190,6 +208,35 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/distribution/DistributionView.vue'),
         meta: { roles: ['super_admin', 'tenant_admin'] },
       },
+      {
+        path: '/redeem-codes',
+        name: 'RedeemCodes',
+        component: () => import('@/views/redeem/RedeemCodeView.vue'),
+        meta: { roles: ['super_admin', 'tenant_admin'] },
+      },
+      {
+        path: '/announcements',
+        name: 'Announcements',
+        component: () => import('@/views/announcements/AnnouncementView.vue'),
+        meta: { roles: ['super_admin', 'tenant_admin'] },
+      },
+      {
+        path: '/model-mappings',
+        name: 'ModelMappings',
+        component: () => import('@/views/mapping/ModelMappingView.vue'),
+        meta: { roles: ['super_admin', 'tenant_admin'] },
+      },
+      {
+        path: '/user-groups',
+        name: 'UserGroups',
+        component: () => import('@/views/groups/UserGroupView.vue'),
+        meta: { roles: ['super_admin', 'tenant_admin'] },
+      },
+      {
+        path: '/referrals',
+        name: 'Referrals',
+        component: () => import('@/views/referral/ReferralView.vue'),
+      },
     ],
   },
   {
@@ -236,6 +283,28 @@ function hasPermission(role: string, permission?: string): boolean {
 
 router.beforeEach((to, _from, next) => {
   NProgress.start()
+
+  // 处理 OAuth 回调带来的 token
+  if (window.location.hash.includes('token=')) {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '')
+    const token = params.get('token')
+    const refreshToken = params.get('refresh_token')
+    if (token) {
+      localStorage.setItem('token', token)
+      if (refreshToken) localStorage.setItem('refresh_token', refreshToken)
+      // 解析 JWT 获取用户信息
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        if (payload.user_id) localStorage.setItem('user_id', payload.user_id)
+        if (payload.tenant_id) localStorage.setItem('tenant_id', payload.tenant_id)
+        if (payload.email) localStorage.setItem('email', payload.email)
+        if (payload.role) localStorage.setItem('role', payload.role)
+      } catch { /* ignore */ }
+      // 清除 URL 参数
+      window.location.hash = '#/dashboard'
+      return
+    }
+  }
 
   const token = localStorage.getItem('token')
   const role = localStorage.getItem('role') || ''

@@ -143,7 +143,7 @@ export interface Tenant {
 export const authApi = {
   login: (data: { email: string; password: string }) =>
     api.post('/auth/login', data),
-  register: (data: { username: string; email: string; password: string; tenant_id?: string }) =>
+  register: (data: { username: string; email: string; password: string; tenant_id?: string; invite_code?: string }) =>
     api.post('/auth/register', data),
   sendCode: (data: { type: string; target: string; purpose: string; country_code?: string }) =>
     api.post('/auth/verification/send', data),
@@ -173,6 +173,7 @@ export const modelApi = {
 // 公开 API（无需认证）
 export const publicApi = {
   getModels: (provider?: string) => api.get('/public/models', { params: { provider } }),
+  getAnnouncements: () => api.get('/public/announcements'),
 }
 
 export const adminApi = {
@@ -206,6 +207,44 @@ export const adminApi = {
     api.post('/admin/apikeys', data),
   revokeApiKey: (id: string) => api.put(`/admin/apikeys/${id}/revoke`),
   deleteApiKey: (id: string) => api.delete(`/admin/apikeys/${id}`),
+
+  // 兑换码管理
+  getRedeemCodes: () => api.get('/admin/redeem-codes'),
+  batchCreateRedeemCodes: (data: { count: number; amount: number; prefix?: string; expires_at?: string }) =>
+    api.post('/admin/redeem-codes/batch', data),
+  deleteRedeemCode: (id: string) => api.delete(`/admin/redeem-codes/${id}`),
+  redeemCode: (code: string) => api.post('/admin/redeem', { code }),
+
+  // 公告管理
+  getAnnouncements: (active?: boolean) => api.get('/admin/announcements', { params: { active } }),
+  createAnnouncement: (data: { title: string; content: string; type?: string; pinned?: boolean }) =>
+    api.post('/admin/announcements', data),
+  updateAnnouncement: (id: string, data: Record<string, any>) => api.put(`/admin/announcements/${id}`, data),
+  deleteAnnouncement: (id: string) => api.delete(`/admin/announcements/${id}`),
+
+  // 模型映射
+  getModelMappings: () => api.get('/admin/model-mappings'),
+  createModelMapping: (data: { source_model: string; target_model: string; tenant_id?: string; priority?: number }) =>
+    api.post('/admin/model-mappings', data),
+  deleteModelMapping: (id: string) => api.delete(`/admin/model-mappings/${id}`),
+  toggleModelMapping: (id: string) => api.put(`/admin/model-mappings/${id}/toggle`),
+
+  // 用户分组
+  getUserGroups: () => api.get('/admin/user-groups'),
+  createUserGroup: (data: { name: string; multiplier: number; rpm_limit?: number; tpm_limit?: number }) =>
+    api.post('/admin/user-groups', data),
+  updateUserGroup: (id: string, data: Record<string, any>) => api.put(`/admin/user-groups/${id}`, data),
+  deleteUserGroup: (id: string) => api.delete(`/admin/user-groups/${id}`),
+
+  // 邀请奖励
+  getReferrals: () => api.get('/admin/referrals'),
+  getReferralCode: () => api.get('/admin/referrals/my-code'),
+  settleReferral: (id: string) => api.post(`/admin/referrals/settle/${id}`),
+
+  // 用户引导
+  getOnboarding: () => api.get('/admin/onboarding'),
+  updateOnboarding: (data: { current_step?: number; completed?: boolean; skipped?: boolean }) =>
+    api.put('/admin/onboarding', data),
 }
 
 // 钱包 API

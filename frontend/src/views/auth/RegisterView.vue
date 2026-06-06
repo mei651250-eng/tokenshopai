@@ -1,7 +1,6 @@
 <template>
   <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-600 via-brand to-primary-800">
     <div class="w-full max-w-md">
-      <!-- Card -->
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 animate-fade-in-up">
         <!-- Header -->
         <div class="text-center mb-8">
@@ -10,46 +9,12 @@
               <span class="text-white text-2xl font-bold">T</span>
             </div>
           </router-link>
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">TokenHub</h1>
-          <p class="text-gray-500 mt-1">企业级 AI API 网关</p>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">注册 TokenHub</h1>
+          <p class="text-gray-500 mt-1">创建账号，开始使用 AI API</p>
         </div>
 
-        <!-- Form -->
-        <el-form :model="form" @submit.prevent="handleLogin" label-position="top">
-          <el-form-item label="邮箱">
-            <el-input
-              v-model="form.email"
-              placeholder="请输入邮箱"
-              prefix-icon="Message"
-              size="large"
-            />
-          </el-form-item>
-
-          <el-form-item label="密码">
-            <el-input
-              v-model="form.password"
-              type="password"
-              placeholder="请输入密码"
-              prefix-icon="Lock"
-              size="large"
-              show-password
-            />
-          </el-form-item>
-
-          <el-button
-            type="primary"
-            size="large"
-            class="w-full mt-2"
-            :loading="loading"
-            native-type="submit"
-          >
-            登录
-          </el-button>
-        </el-form>
-
-        <!-- OAuth -->
-        <el-divider>其他登录方式</el-divider>
-        <div class="flex gap-3 mb-4">
+        <!-- OAuth Buttons -->
+        <div class="flex gap-3 mb-6">
           <button
             class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             @click="oauthLogin('github')"
@@ -66,27 +31,31 @@
           </button>
         </div>
 
-        <!-- 更多登录方式 -->
-        <div class="flex items-center justify-center gap-4 text-xs">
-          <router-link to="/login/face" class="text-indigo-600 hover:underline flex items-center gap-1">
-            人脸识别
-          </router-link>
-          <span class="text-gray-300">|</span>
-          <router-link to="/login/code" class="text-indigo-600 hover:underline flex items-center gap-1">
-            验证码登录
-          </router-link>
-          <span class="text-gray-300">|</span>
-          <a href="#" class="text-indigo-600 hover:underline flex items-center gap-1" @click.prevent="$router.push('/login/code')">
-            Web3钱包
-          </a>
-        </div>
+        <el-divider>或使用邮箱注册</el-divider>
+
+        <!-- Form -->
+        <el-form :model="form" @submit.prevent="handleRegister" label-position="top">
+          <el-form-item label="用户名">
+            <el-input v-model="form.username" placeholder="可选" prefix-icon="User" size="large" />
+          </el-form-item>
+          <el-form-item label="邮箱">
+            <el-input v-model="form.email" placeholder="请输入邮箱" prefix-icon="Message" size="large" />
+          </el-form-item>
+          <el-form-item label="密码">
+            <el-input v-model="form.password" type="password" placeholder="至少 8 位" prefix-icon="Lock" size="large" show-password />
+          </el-form-item>
+          <el-form-item label="邀请码（可选）">
+            <el-input v-model="form.invite_code" placeholder="有邀请码可获额外奖励" prefix-icon="Present" size="large" />
+          </el-form-item>
+
+          <el-button type="primary" size="large" class="w-full mt-2" :loading="loading" native-type="submit">
+            注册
+          </el-button>
+        </el-form>
 
         <!-- Footer -->
-        <div class="mt-4 text-center text-sm text-gray-500">
-          <router-link to="/" class="text-primary-600 hover:text-primary-700 font-medium">返回首页</router-link>
-          <span class="mx-2">|</span>
-          <span>还没有账号？</span>
-          <router-link to="/register" class="text-primary-600 hover:text-primary-700 font-medium">注册</router-link>
+        <div class="mt-6 text-center text-sm text-gray-500">
+          已有账号？<router-link to="/login" class="text-primary-600 hover:text-primary-700 font-medium">去登录</router-link>
         </div>
       </div>
     </div>
@@ -94,38 +63,55 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useUserStore } from '@/stores/user'
+import { authApi } from '@/api'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const route = useRoute()
-const userStore = useUserStore()
 const loading = ref(false)
 
 const form = reactive({
+  username: '',
   email: '',
   password: '',
+  invite_code: '',
+})
+
+onMounted(() => {
+  // 从 URL 参数读取邀请码
+  const invite = route.query.invite as string
+  if (invite) {
+    form.invite_code = invite
+  }
 })
 
 function oauthLogin(provider: string) {
   window.location.href = `/auth/oauth/${provider}`
 }
 
-async function handleLogin() {
+async function handleRegister() {
   if (!form.email || !form.password) {
     ElMessage.warning('请填写邮箱和密码')
     return
   }
+  if (form.password.length < 8) {
+    ElMessage.warning('密码至少 8 位')
+    return
+  }
   loading.value = true
   try {
-    await userStore.login(form.email, form.password)
-    ElMessage.success('登录成功')
-    const redirect = (route.query.redirect as string) || '/'
-    router.push(redirect)
+    await authApi.register({
+      username: form.username,
+      email: form.email,
+      password: form.password,
+      invite_code: form.invite_code || undefined,
+    })
+    ElMessage.success('注册成功，请登录')
+    router.push('/login')
   } catch (e: any) {
-    ElMessage.error(e.message || '登录失败')
+    ElMessage.error(e?.response?.data?.error || e.message || '注册失败')
   } finally {
     loading.value = false
   }

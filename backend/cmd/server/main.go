@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"crypto/rand"
@@ -248,6 +249,10 @@ func main() {
 		})
 		v1.GET("/models", middleware.APIKeyMiddleware(rdb), func(c *gin.Context) {
 			handleListModels(c, modelRouter)
+		})
+		// 图像生成 API（兼容 OpenAI /v1/images/generations）
+		v1.POST("/images/generations", middleware.APIKeyMiddleware(rdb), func(c *gin.Context) {
+			handleImageGeneration(c, modelRouter, billingService, logger)
 		})
 	}
 
@@ -2013,6 +2018,371 @@ func main() {
 			}
 			c.JSON(http.StatusOK, gin.H{"message": "API Key deleted"})
 		})
+
+		// ============ 兑换码系统 ============
+		admin.GET("/redeem-codes", func(c *gin.Context) {
+			var codes []RedeemCode
+			if err := db.Order("created_at DESC").Find(&codes).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": codes})
+		})
+
+		admin.POST("/redeem-codes/batch", func(c *gin.Context) {
+			var req struct {
+				Count     int     `json:"count" binding:"required"`
+				Amount    float64 `json:"amount" binding:"required"`
+				Prefix    string  `json:"prefix"`
+				ExpiresAt *string `json:"expires_at"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if req.Count > 1000 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "batch size too large, max 1000"})
+				return
+			}
+			prefix := req.Prefix
+			if prefix == "" {
+				prefix = "TH"
+			}
+			codes := make([]RedeemCode, 0, req.Count)
+			for i := 0; i < req.Count; i++ {
+				code := prefix + "-" + generateSecureRandom(12)
+				rc := RedeemCode{
+					ID:        uuid.New().String(),
+					Code:      code,
+					Amount:    req.Amount,
+					Status:    "active",
+					CreatedAt: time.Now(),
+				}
+				if req.ExpiresAt != nil {
+					t, _ := time.Parse(time.RFC3339, *req.ExpiresAt)
+					rc.ExpiresAt = &t
+				}
+				codes = append(codes, rc)
+			}
+			if err := db.Create(&codes).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			rawCodes := make([]string, 0, len(codes))
+			for _, rc := range codes {
+				rawCodes = append(rawCodes, rc.Code)
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"message": fmt.Sprintf("created %d codes", len(codes)),
+				"codes":   rawCodes,
+			})
+		})
+
+		admin.DELETE("/redeem-codes/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			if err := db.Where("id = ?", id).Delete(&RedeemCode{}).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		// 用户兑换
+		admin.POST("/redeem", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			var req struct {
+				Code string `json:"code" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			var rc RedeemCode
+			if err := db.Where("code = ? AND status = ?", req.Code, "active").First(&rc).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "兑换码无效或已使用"})
+				return
+			}
+			if rc.ExpiresAt != nil && rc.ExpiresAt.Before(time.Now()) {
+				db.Model(&rc).Update("status", "expired")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "兑换码已过期"})
+				return
+			}
+			// 标记已使用
+			db.Model(&rc).Updates(map[string]interface{}{"status": "used", "used_by": userID, "used_at": time.Now()})
+			// 充值
+			if err := billingService.TopUp(c.Request.Context(), tenantID, userID, rc.Amount); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "兑换成功", "amount": rc.Amount})
+		})
+
+		// ============ 公告系统 ============
+		admin.GET("/announcements", func(c *gin.Context) {
+			var anns []Announcement
+			query := db.Order("pinned DESC, created_at DESC")
+			if c.Query("active") == "true" {
+				query = query.Where("status = ?", "active")
+			}
+			if err := query.Find(&anns).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": anns})
+		})
+
+		admin.POST("/announcements", func(c *gin.Context) {
+			var req struct {
+				Title   string `json:"title" binding:"required"`
+				Content string `json:"content" binding:"required"`
+				Type    string `json:"type"`
+				Pinned  bool   `json:"pinned"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			annType := req.Type
+			if annType == "" {
+				annType = "info"
+			}
+			ann := Announcement{
+				ID:        uuid.New().String(),
+				Title:     req.Title,
+				Content:   req.Content,
+				Type:      annType,
+				Status:    "active",
+				Pinned:    req.Pinned,
+				CreatedAt: time.Now(),
+			}
+			if err := db.Create(&ann).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": ann})
+		})
+
+		admin.PUT("/announcements/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			var req struct {
+				Title   string `json:"title"`
+				Content string `json:"content"`
+				Type    string `json:"type"`
+				Pinned  *bool  `json:"pinned"`
+				Status  string `json:"status"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			updates := map[string]interface{}{}
+			if req.Title != "" { updates["title"] = req.Title }
+			if req.Content != "" { updates["content"] = req.Content }
+			if req.Type != "" { updates["type"] = req.Type }
+			if req.Pinned != nil { updates["pinned"] = *req.Pinned }
+			if req.Status != "" { updates["status"] = req.Status }
+			db.Model(&Announcement{}).Where("id = ?", id).Updates(updates)
+			c.JSON(http.StatusOK, gin.H{"message": "updated"})
+		})
+
+		admin.DELETE("/announcements/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			db.Where("id = ?", id).Delete(&Announcement{})
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		// ============ 模型映射 ============
+		admin.GET("/model-mappings", func(c *gin.Context) {
+			var mappings []ModelMapping
+			if err := db.Order("created_at DESC").Find(&mappings).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": mappings})
+		})
+
+		admin.POST("/model-mappings", func(c *gin.Context) {
+			var req struct {
+				SourceModel string `json:"source_model" binding:"required"`
+				TargetModel string `json:"target_model" binding:"required"`
+				TenantID    string `json:"tenant_id"`
+				Priority   int    `json:"priority"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			mapping := ModelMapping{
+				ID:          uuid.New().String(),
+				SourceModel: req.SourceModel,
+				TargetModel: req.TargetModel,
+				TenantID:    req.TenantID,
+				Priority:    req.Priority,
+				Enabled:     true,
+				CreatedAt:   time.Now(),
+			}
+			if err := db.Create(&mapping).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": mapping})
+		})
+
+		admin.DELETE("/model-mappings/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			db.Where("id = ?", id).Delete(&ModelMapping{})
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		admin.PUT("/model-mappings/:id/toggle", func(c *gin.Context) {
+			id := c.Param("id")
+			var mapping ModelMapping
+			if err := db.Where("id = ?", id).First(&mapping).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+				return
+			}
+			db.Model(&mapping).Update("enabled", !mapping.Enabled)
+			c.JSON(http.StatusOK, gin.H{"enabled": !mapping.Enabled})
+		})
+
+		// ============ 用户分组+倍率 ============
+		admin.GET("/user-groups", func(c *gin.Context) {
+			var groups []UserGroup
+			if err := db.Order("multiplier ASC").Find(&groups).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": groups})
+		})
+
+		admin.POST("/user-groups", func(c *gin.Context) {
+			var req struct {
+				Name       string  `json:"name" binding:"required"`
+				Multiplier float64 `json:"multiplier" binding:"required"`
+				RpmLimit   int     `json:"rpm_limit"`
+				TpmLimit   int64   `json:"tpm_limit"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			group := UserGroup{
+				ID:         uuid.New().String(),
+				Name:       req.Name,
+				Multiplier: req.Multiplier,
+				RpmLimit:   req.RpmLimit,
+				TpmLimit:   req.TpmLimit,
+				CreatedAt:  time.Now(),
+			}
+			if err := db.Create(&group).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": group})
+		})
+
+		admin.PUT("/user-groups/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			var req struct {
+				Name       string  `json:"name"`
+				Multiplier float64 `json:"multiplier"`
+				RpmLimit   int     `json:"rpm_limit"`
+				TpmLimit   int64   `json:"tpm_limit"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			updates := map[string]interface{}{}
+			if req.Name != "" { updates["name"] = req.Name }
+			if req.Multiplier > 0 { updates["multiplier"] = req.Multiplier }
+			if req.RpmLimit > 0 { updates["rpm_limit"] = req.RpmLimit }
+			if req.TpmLimit > 0 { updates["tpm_limit"] = req.TpmLimit }
+			db.Model(&UserGroup{}).Where("id = ?", id).Updates(updates)
+			c.JSON(http.StatusOK, gin.H{"message": "updated"})
+		})
+
+		admin.DELETE("/user-groups/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			db.Where("id = ?", id).Delete(&UserGroup{})
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		// 邀请奖励管理
+		admin.GET("/referrals", func(c *gin.Context) {
+			var refs []ReferralInvite
+			db.Order("created_at DESC").Find(&refs)
+			c.JSON(http.StatusOK, gin.H{"data": refs})
+		})
+		admin.GET("/referrals/my-code", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			// 为用户生成唯一邀请码（基于用户ID的短码）
+			code := fmt.Sprintf("INV-%s", userID[:8])
+			c.JSON(http.StatusOK, gin.H{"code": code})
+		})
+		admin.POST("/referrals/settle/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			var ref ReferralInvite
+			if err := db.First(&ref, "id = ?", id).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+				return
+			}
+			now := time.Now()
+			db.Model(&ref).Updates(map[string]interface{}{"status": "rewarded", "rewarded_at": &now})
+			// 给邀请人加余额
+			if ref.InviterID != "" {
+				rewardCents := int64(ref.RewardAmount * 100) // 元→分
+				billingService.TopUp(c.Request.Context(), c.GetString("tenant_id"), ref.InviterID, rewardCents)
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "settled"})
+		})
+
+		// 用户引导进度
+		admin.GET("/onboarding", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			var prog OnboardingProgress
+			if err := db.Where("user_id = ?", userID).First(&prog).Error; err != nil {
+				c.JSON(http.StatusOK, gin.H{"current_step": 0, "completed": false, "skipped": false})
+				return
+			}
+			c.JSON(http.StatusOK, prog)
+		})
+		admin.PUT("/onboarding", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			var req struct {
+				CurrentStep *int  `json:"current_step"`
+				Completed   *bool `json:"completed"`
+				Skipped     *bool `json:"skipped"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			var prog OnboardingProgress
+			if err := db.Where("user_id = ?", userID).First(&prog).Error; err != nil {
+				prog = OnboardingProgress{
+					ID:      uuid.New().String(),
+					UserID:  userID,
+				}
+			}
+			if req.CurrentStep != nil {
+				prog.CurrentStep = *req.CurrentStep
+			}
+			if req.Completed != nil {
+				prog.Completed = *req.Completed
+				if *req.Completed {
+					now := time.Now()
+					prog.CompletedAt = &now
+				}
+			}
+			if req.Skipped != nil {
+				prog.Skipped = *req.Skipped
+			}
+			prog.UpdatedAt = time.Now()
+			db.Save(&prog)
+			c.JSON(http.StatusOK, prog)
+		})
 	}
 
 	// 公开模型广场接口（无需认证）
@@ -2029,6 +2399,16 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"data": models})
 	})
 
+	// 公告公开接口（无需认证）
+	engine.GET("/public/announcements", func(c *gin.Context) {
+		var anns []Announcement
+		if err := db.Where("status = ?", "active").Order("pinned DESC, created_at DESC").Limit(10).Find(&anns).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": anns})
+	})
+
 	// 认证接口（无需JWT）
 	authGroup := engine.Group("/auth")
 	{
@@ -2037,6 +2417,14 @@ func main() {
 		})
 		authGroup.POST("/register", func(c *gin.Context) {
 			handleRegister(c, db, logger)
+		})
+
+		// OAuth 登录（GitHub / Google）
+		authGroup.GET("/oauth/:provider", func(c *gin.Context) {
+			handleOAuthRedirect(c, cfg, logger)
+		})
+		authGroup.GET("/oauth/:provider/callback", func(c *gin.Context) {
+			handleOAuthCallback(c, jwtManager, db, logger)
 		})
 
 		// 验证码登录/注册
@@ -2140,6 +2528,89 @@ func generateSecureRandom(length int) string {
 	return hex.EncodeToString(b)[:length]
 }
 
+// ============ P1+ 新增模型 ============
+
+// RedeemCode 兑换码
+type RedeemCode struct {
+	ID        string     `json:"id" gorm:"primaryKey"`
+	Code      string     `json:"code" gorm:"uniqueIndex"`
+	Amount    float64    `json:"amount"`
+	Status    string     `json:"status"` // active, used, expired
+	UsedBy    string     `json:"used_by,omitempty"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// Announcement 公告
+type Announcement struct {
+	ID        string    `json:"id" gorm:"primaryKey"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	Type      string    `json:"type"` // info, warning, success, error
+	Status    string    `json:"status"` // active, archived
+	Pinned    bool      `json:"pinned"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ModelMapping 模型映射
+type ModelMapping struct {
+	ID          string    `json:"id" gorm:"primaryKey"`
+	SourceModel string    `json:"source_model"`
+	TargetModel string    `json:"target_model"`
+	TenantID    string    `json:"tenant_id"`
+	Priority    int       `json:"priority"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// UserGroup 用户分组
+type UserGroup struct {
+	ID         string    `json:"id" gorm:"primaryKey"`
+	Name       string    `json:"name"`
+	Multiplier float64   `json:"multiplier"` // 倍率，如 0.8 表示 8 折
+	RpmLimit   int       `json:"rpm_limit"`
+	TpmLimit   int64     `json:"tpm_limit"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// ReferralInvite 邀请记录
+type ReferralInvite struct {
+	ID          string     `json:"id" gorm:"primaryKey"`
+	InviterID   string     `json:"inviter_id" gorm:"index"`
+	InviteeID   string     `json:"invitee_id"`
+	InviteCode  string     `json:"invite_code" gorm:"index"`
+	RewardAmount float64   `json:"reward_amount"`
+	Status      string     `json:"status"` // pending, rewarded, expired
+	RewardedAt  *time.Time `json:"rewarded_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// OAuthAccount 第三方 OAuth 绑定
+type OAuthAccount struct {
+	ID           string    `json:"id" gorm:"primaryKey"`
+	UserID       string    `json:"user_id" gorm:"index"`
+	Provider     string    `json:"provider"` // github, google
+	ProviderID   string    `json:"provider_id"`
+	AccessToken  string    `json:"-"`
+	RefreshToken string    `json:"-"`
+	AvatarURL    string    `json:"avatar_url,omitempty"`
+	DisplayName  string    `json:"display_name,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// OnboardingProgress 用户引导进度
+type OnboardingProgress struct {
+	ID           string    `json:"id" gorm:"primaryKey"`
+	UserID       string    `json:"user_id" gorm:"uniqueIndex"`
+	CurrentStep  int       `json:"current_step"`
+	Completed    bool      `json:"completed"`
+	Skipped      bool      `json:"skipped"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 func initLogger(mode string) *zap.Logger {
 	var zapConfig zap.Config
 	if mode == "release" {
@@ -2184,6 +2655,13 @@ func autoMigrate(db *gorm.DB, logger *zap.Logger) {
 		&wallet.CryptoDepositOrder{},
 		&payment.PaymentOrder{},
 		&gateway.ModelConfig{},
+		&RedeemCode{},
+		&Announcement{},
+		&ModelMapping{},
+		&UserGroup{},
+		&ReferralInvite{},
+		&OAuthAccount{},
+		&OnboardingProgress{},
 	); err != nil {
 		logger.Fatal("Failed to auto migrate database", zap.Error(err))
 	}
@@ -2480,10 +2958,11 @@ func handleLogin(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, logge
 
 func handleRegister(c *gin.Context, db *gorm.DB, logger *zap.Logger) {
 	var req struct {
-		Username string `json:"username"`
-		Email    string `json:"email" binding:"required,email"`
-		Password string `json:"password" binding:"required,min=8"`
-		TenantID string `json:"tenant_id"`
+		Username    string `json:"username"`
+		Email       string `json:"email" binding:"required,email"`
+		Password    string `json:"password" binding:"required,min=8"`
+		TenantID    string `json:"tenant_id"`
+		InviteCode  string `json:"invite_code"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2538,6 +3017,24 @@ func handleRegister(c *gin.Context, db *gorm.DB, logger *zap.Logger) {
 		logger.Error("failed to create user", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
 		return
+	}
+
+	// 处理邀请码
+	if req.InviteCode != "" {
+		var inviter auth.User
+		if err := db.Where("id = ?", strings.TrimPrefix(req.InviteCode, "INV-")).First(&inviter).Error; err == nil {
+			// 找到邀请人，创建邀请记录
+			db.Create(&ReferralInvite{
+				ID:           uuid.New().String(),
+				InviterID:    inviter.ID,
+				InviteeID:    user.ID,
+				InviteCode:   req.InviteCode,
+				RewardAmount: 5.0, // 默认奖励 5 元
+				Status:       "pending",
+				CreatedAt:    time.Now(),
+			})
+			logger.Info("referral recorded", zap.String("inviter", inviter.ID), zap.String("invitee", user.ID))
+		}
 	}
 
 	logger.Info("user registered", zap.String("email", req.Email))
@@ -2778,4 +3275,319 @@ func handlePaymentCallback(c *gin.Context, svc *payment.PaymentService, channel 
 	default:
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	}
+}
+
+// handleOAuthRedirect 发起 OAuth 重定向（GitHub / Google）
+func handleOAuthRedirect(c *gin.Context, cfg *config.Config, logger *zap.Logger) {
+	provider := c.Param("provider")
+	var authURL, clientID string
+	state := generateSecureRandom(16)
+
+	switch provider {
+	case "github":
+		clientID = os.Getenv("GITHUB_CLIENT_ID")
+		if clientID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub OAuth not configured"})
+			return
+		}
+		authURL = fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&state=%s&scope=user:email", clientID, state)
+	case "google":
+		clientID = os.Getenv("GOOGLE_CLIENT_ID")
+		if clientID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Google OAuth not configured"})
+			return
+		}
+		redirectURI := fmt.Sprintf("https://%s/auth/oauth/google/callback", c.Request.Host)
+		authURL = fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&state=%s&scope=openid+email+profile&response_type=code", clientID, redirectURI, state)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
+		return
+	}
+
+	// 将 state 存入 Redis 供回调校验（简化：直接用 cookie）
+	c.SetCookie("oauth_state", state, 300, "/", "", false, true)
+	c.Redirect(http.StatusTemporaryRedirect, authURL)
+}
+
+// handleOAuthCallback 处理 OAuth 回调
+func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, logger *zap.Logger) {
+	provider := c.Param("provider")
+	code := c.Query("code")
+	state := c.Query("state")
+
+	// 校验 state
+	savedState, _ := c.Cookie("oauth_state")
+	if state == "" || state != savedState {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid state"})
+		return
+	}
+
+	var (
+		accessToken  string
+		email        string
+		name         string
+		avatarURL    string
+		providerID   string
+	)
+
+	switch provider {
+	case "github":
+		var err error
+		accessToken, email, name, avatarURL, providerID, err = exchangeGitHubCode(code)
+		if err != nil {
+			logger.Error("github oauth failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	case "google":
+		var err error
+		accessToken, email, name, avatarURL, providerID, err = exchangeGoogleCode(code, c.Request.Host)
+		if err != nil {
+			logger.Error("google oauth failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
+		return
+	}
+
+	// 查找或创建用户
+	var oauthAcc OAuthAccount
+	var user auth.User
+
+	if err := db.Where("provider = ? AND provider_id = ?", provider, providerID).First(&oauthAcc).Error; err == nil {
+		// 已绑定，直接登录
+		db.First(&user, "id = ?", oauthAcc.UserID)
+	} else {
+		// 未绑定，按邮箱查找或创建
+		if err := db.Where("email = ?", email).First(&user).Error; err != nil {
+			// 创建新用户
+			var defaultTenant tenant.Tenant
+			if err := db.Where("slug = ?", "default").First(&defaultTenant).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "default tenant not found"})
+				return
+			}
+			user = auth.User{
+				ID:           uuid.New().String(),
+				TenantID:     defaultTenant.ID,
+				Username:     name,
+				Email:        email,
+				PasswordHash: "", // OAuth 用户无密码
+				Role:         auth.RoleDeveloper,
+				Status:       auth.UserActive,
+				Language:     "zh-CN",
+				Timezone:     "Asia/Shanghai",
+			}
+			if err := db.Create(&user).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
+				return
+			}
+		}
+
+		// 绑定 OAuth
+		db.Create(&OAuthAccount{
+			ID:           uuid.New().String(),
+			UserID:       user.ID,
+			Provider:     provider,
+			ProviderID:   providerID,
+			AccessToken:  accessToken,
+			AvatarURL:    avatarURL,
+			DisplayName:  name,
+			CreatedAt:    time.Now(),
+		})
+	}
+
+	// 生成 JWT
+	tokenPair, err := jwtManager.GenerateTokenPair(user.ID, user.TenantID, string(user.Role), user.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 重定向前端并携带 token
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3001"
+	}
+	redirectURL := fmt.Sprintf("%s/#/dashboard?token=%s&refresh_token=%s", frontendURL, tokenPair.AccessToken, tokenPair.RefreshToken)
+	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+}
+
+// exchangeGitHubCode 用 code 换取 GitHub 用户信息
+func exchangeGitHubCode(code string) (accessToken, email, name, avatarURL, providerID string, err error) {
+	clientID := os.Getenv("GITHUB_CLIENT_ID")
+	clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
+
+	// 换取 access_token
+	resp, err := http.Post(
+		"https://github.com/login/oauth/access_token?client_id="+clientID+"&client_secret="+clientSecret+"&code="+code,
+		"application/json",
+		nil,
+	)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	var tokenResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&tokenResp)
+	accessToken, _ = tokenResp["access_token"].(string)
+
+	// 获取用户信息
+	req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp2.Body.Close()
+
+	var userInfo map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&userInfo)
+	name, _ = userInfo["name"].(string)
+	if name == "" {
+		name, _ = userInfo["login"].(string)
+	}
+	avatarURL, _ = userInfo["avatar_url"].(string)
+	pid, _ := userInfo["id"].(float64)
+	providerID = fmt.Sprintf("%.0f", pid)
+
+	// 获取邮箱
+	req2, _ := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
+	req2.Header.Set("Authorization", "Bearer "+accessToken)
+	resp3, err := http.DefaultClient.Do(req2)
+	if err == nil {
+		defer resp3.Body.Close()
+		var emails []map[string]interface{}
+		json.NewDecoder(resp3.Body).Decode(&emails)
+		for _, e := range emails {
+			if primary, _ := e["primary"].(bool); primary {
+				email, _ = e["email"].(string)
+				break
+			}
+		}
+	}
+	return
+}
+
+// exchangeGoogleCode 用 code 换取 Google 用户信息
+func exchangeGoogleCode(code, host string) (accessToken, email, name, avatarURL, providerID string, err error) {
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	redirectURI := fmt.Sprintf("https://%s/auth/oauth/google/callback", host)
+
+	// 换取 token
+	resp, err := http.PostForm("https://oauth2.googleapis.com/token", map[string][]string{
+		"code":          {code},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+		"redirect_uri":  {redirectURI},
+		"grant_type":    {"authorization_code"},
+	})
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	var tokenResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&tokenResp)
+	accessToken, _ = tokenResp["access_token"].(string)
+	idToken, _ := tokenResp["id_token"].(string)
+	_ = idToken
+
+	// 获取用户信息
+	req, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp2.Body.Close()
+
+	var userInfo map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&userInfo)
+	email, _ = userInfo["email"].(string)
+	name, _ = userInfo["name"].(string)
+	avatarURL, _ = userInfo["picture"].(string)
+	pid, _ := userInfo["id"].(string)
+	providerID = pid
+	return
+}
+
+// handleImageGeneration 处理图像生成请求（兼容 OpenAI /v1/images/generations）
+func handleImageGeneration(c *gin.Context, modelRouter *smartrouter.ModelRouter, billingSvc *billing.BillingService, logger *zap.Logger) {
+	var req struct {
+		Model          string `json:"model"`
+		Prompt         string `json:"prompt" binding:"required"`
+		N              int    `json:"n"`
+		Size           string `json:"size"`
+		ResponseFormat string `json:"response_format"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+	if req.N <= 0 {
+		req.N = 1
+	}
+	if req.Size == "" {
+		req.Size = "1024x1024"
+	}
+	if req.Model == "" {
+		req.Model = "dall-e-3"
+	}
+	if req.ResponseFormat == "" {
+		req.ResponseFormat = "url"
+	}
+
+	// 构造上游请求体
+	payload := map[string]interface{}{
+		"model":           req.Model,
+		"prompt":          req.Prompt,
+		"n":               req.N,
+		"size":            req.Size,
+		"response_format": req.ResponseFormat,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	// 路由选择
+	chatReq := &gateway.ChatRequest{
+		Model:    req.Model,
+		Messages: []gateway.ChatMessage{{Role: "user", Content: req.Prompt}},
+		TraceID:  uuid.New().String(),
+	}
+	routeResult, err := modelRouter.Route(c.Request.Context(), chatReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "no available upstream for model " + req.Model, "type": "route_error"}})
+		return
+	}
+
+	mc := routeResult.ModelConfig
+
+	// 向上游发送图片生成请求
+	upstreamURL := strings.TrimSuffix(mc.Endpoint, "/") + "/v1/images/generations"
+	httpReq, _ := http.NewRequestWithContext(c.Request.Context(), "POST", upstreamURL, bytes.NewReader(payloadBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+mc.APIKey)
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		logger.Error("image generation upstream failed", zap.Error(err))
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
+		return
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	// 计费（简化：按图片数量计费）
+	tenantID := c.GetString("tenant_id")
+	userID := c.GetString("user_id")
+	if tenantID != "" && userID != "" {
+		costCents := int64(req.N * 400) // 每张约 4 元
+		billingSvc.TopUp(c.Request.Context(), tenantID, userID, -costCents) // 负数=扣费
+	}
+
+	c.Data(resp.StatusCode, "application/json", bodyBytes)
 }

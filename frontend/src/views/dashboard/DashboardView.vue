@@ -1,5 +1,12 @@
 <template>
   <div class="p-6">
+    <!-- Onboarding Wizard for new users -->
+    <OnboardingWizard
+      v-if="showOnboarding"
+      @complete="onOnboardingComplete"
+      @skip="onOnboardingComplete"
+    />
+
     <!-- Header -->
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('dashboard.title') }}</h1>
@@ -82,10 +89,18 @@ import {
   GridComponent,
 } from 'echarts/components'
 import { adminApi } from '@/api'
+import OnboardingWizard from '@/views/onboarding/OnboardingWizard.vue'
 
 use([CanvasRenderer, LineChart, PieChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
 
 const { t } = useI18n()
+
+// Onboarding
+const showOnboarding = ref(false)
+
+function onOnboardingComplete() {
+  showOnboarding.value = false
+}
 
 // 从后端获取的真实指标数据
 const metrics = ref<any>({})
@@ -208,7 +223,14 @@ const modelPieOption = computed(() => {
   }
 })
 
-onMounted(() => {
+onMounted(async () => {
   loadMetrics()
+  // Check onboarding
+  try {
+    const res: any = await adminApi.getOnboarding()
+    if (!res.completed && !res.skipped) {
+      showOnboarding.value = true
+    }
+  } catch { /* ignore */ }
 })
 </script>
