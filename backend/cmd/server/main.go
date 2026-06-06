@@ -492,7 +492,7 @@ func main() {
 				return
 			}
 
-			models := make([]gin.H{}, 0, len(result.Data))
+			models := make([]map[string]interface{}, 0, len(result.Data))
 			for _, m := range result.Data {
 				models = append(models, gin.H{
 					"id":       m.ID,
