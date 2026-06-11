@@ -190,24 +190,16 @@ func (c *ClaudeConverter) ParseStreamChunk(line string) (*gateway.StreamChunk, e
 	switch eventType {
 	case "message_start":
 		// 消息开始，包含角色信息
-		if message, ok := raw["message"].(map[string]interface{}); ok {
-			chunk.Choices = []gateway.Choice{{
-				Index: 0,
-				Delta: &gateway.ChatMessage{Role: "assistant", Content: ""},
-			}}
-		}
+		chunk.Choices = []gateway.Choice{{
+			Index: 0,
+			Delta: &gateway.ChatMessage{Role: "assistant", Content: ""},
+		}}
 	case "content_block_start":
-		// 内容块开始（可能是 text 或 tool_use）
-		if contentBlock, ok := raw["content_block"].(map[string]interface{}); ok {
-			blockType, _ := contentBlock["type"].(string)
-			if blockType == "tool_use" {
-				// 工具调用开始
-				chunk.Choices = []gateway.Choice{{
-					Index: 0,
-					Delta: &gateway.ChatMessage{Role: "assistant", Content: "", ToolCalls: nil},
-				}}
-			}
-		}
+		// 内容块开始
+		chunk.Choices = []gateway.Choice{{
+			Index: 0,
+			Delta: &gateway.ChatMessage{Role: "assistant", Content: ""},
+		}}
 	case "content_block_delta":
 		// 内容块增量
 		if delta, ok := raw["delta"].(map[string]interface{}); ok {
@@ -221,7 +213,6 @@ func (c *ClaudeConverter) ParseStreamChunk(line string) (*gateway.StreamChunk, e
 					}}
 				}
 			case "input_json_delta":
-				// 工具调用参数增量
 				if partialJSON, ok := delta["partial_json"].(string); ok {
 					chunk.Choices = []gateway.Choice{{
 						Index: 0,
@@ -237,35 +228,32 @@ func (c *ClaudeConverter) ParseStreamChunk(line string) (*gateway.StreamChunk, e
 			Delta: &gateway.ChatMessage{Role: "assistant", Content: ""},
 		}}
 	case "message_delta":
-		// 消息级增量（包含 stop_reason 和 usage）
-		if usage, ok := raw["usage"].(map[string]interface{}); ok {
-			if outputTokens, ok := usage["output_tokens"].(float64); ok {
-				chunk.Usage = &gateway.Usage{
-					CompletionTokens: int(outputTokens),
-				}
-			}
-		}
+		// 消息级增量（包含 stop_reason）
+		finishReason := ""
 		if delta, ok := raw["delta"].(map[string]interface{}); ok {
 			if stopReason, ok := delta["stop_reason"].(string); ok {
-				finishReason := stopReason
+				finishReason = stopReason
 				if stopReason == "end_turn" {
 					finishReason = "stop"
 				} else if stopReason == "max_tokens" {
 					finishReason = "length"
 				}
-				chunk.Choices = []gateway.Choice{{
-					Index:         0,
-					Delta:         &gateway.ChatMessage{Role: "assistant", Content: ""},
-					FinishReason: finishReason,
-				}}
 			}
+		}
+		if finishReason != "" {
+			chunk.Choices = []gateway.Choice{{
+				Index:         0,
+				Delta:         &gateway.ChatMessage{Role: "assistant", Content: ""},
+				FinishReason:  &finishReason,
+			}}
 		}
 	case "message_stop":
 		// 消息完全结束
+		stop := "stop"
 		chunk.Choices = []gateway.Choice{{
 			Index:         0,
 			Delta:         &gateway.ChatMessage{},
-			FinishReason:  "stop",
+			FinishReason:  &stop,
 		}}
 	}
 

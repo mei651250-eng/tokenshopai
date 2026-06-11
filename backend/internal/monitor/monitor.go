@@ -218,16 +218,11 @@ func (c *DingTalkChannel) Send(ctx context.Context, alert *Alert) error {
 		return fmt.Errorf("dingtalk webhook url not configured")
 	}
 	// 构造钉钉机器人消息
-	color := "#FF0000"
-	if alert.Severity == "info" {
-		color = "#4CAF50"
-	} else if alert.Severity == "warning" {
-		color = "#FF9800"
-	}
+	severityTag := strings.ToUpper(alert.Severity)
 	message := map[string]interface{}{
 		"msgtype": "markdown",
 		"markdown": map[string]string{
-			"title": fmt.Sprintf("[%s] %s", strings.ToUpper(alert.Severity), alert.Title),
+			"title": fmt.Sprintf("[%s] %s", severityTag, alert.Title),
 			"text":  fmt.Sprintf("### %s\n\n> **严重级别**: %s\n\n> **类型**: %s\n\n> **详情**: %s\n\n> **时间**: %s\n", alert.Title, alert.Severity, alert.Type, alert.Message, alert.CreatedAt.Format("2006-01-02 15:04:05")),
 		},
 	}
