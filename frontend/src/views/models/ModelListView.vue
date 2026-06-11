@@ -2,20 +2,44 @@
   <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('model.list') }}</h1>
-      <el-button type="primary" @click="openCreateDialog">
-        <el-icon class="mr-1"><Plus /></el-icon> {{ t('model.create') }}
-      </el-button>
+      <div class="flex gap-2">
+        <el-button type="success" @click="showBatchDialog = true">
+          <el-icon class="mr-1"><Download /></el-icon> 厂商一键导入
+        </el-button>
+        <el-button type="primary" @click="openCreateDialog">
+          <el-icon class="mr-1"><Plus /></el-icon> {{ t('model.create') }}
+        </el-button>
+      </div>
     </div>
 
+    <!-- 厂商分组 Tabs -->
+    <el-tabs v-model="activeProvider" type="border-card" class="mb-4" @tab-change="onProviderTabChange">
+      <el-tab-pane label="全部" name="all">
+        <template #label>
+          <span>全部 <el-badge :value="models.length" type="info" class="ml-1" /></span>
+        </template>
+      </el-tab-pane>
+      <el-tab-pane
+        v-for="prov in usedProviders"
+        :key="prov"
+        :label="providerLabels[prov] || prov"
+        :name="prov"
+      >
+        <template #label>
+          <span>{{ providerLabels[prov] || prov }} <el-badge :value="providerModelCount(prov)" type="info" class="ml-1" /></span>
+        </template>
+      </el-tab-pane>
+    </el-tabs>
+
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-      <el-table :data="models" stripe v-loading="loading">
+      <el-table :data="filteredModels" stripe v-loading="loading">
         <el-table-column prop="name" :label="t('model.name')" width="160" />
-        <el-table-column prop="provider" :label="t('model.provider')" width="120">
+        <el-table-column prop="provider" :label="t('model.provider')" width="140">
           <template #default="{ row }">
-            <el-tag size="small">{{ providerLabels[row.provider] || row.provider }}</el-tag>
+            <el-tag size="small" :type="providerTagType(row.provider)">{{ providerLabels[row.provider] || row.provider }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="model_id" label="Model ID" width="180" />
+        <el-table-column prop="model_id" label="Model ID" width="200" />
         <el-table-column :label="t('model.inputPrice')" width="120">
           <template #default="{ row }">{{ row.input_price }}/{{ row.currency || 'CNY' }}/1K</template>
         </el-table-column>
@@ -108,13 +132,87 @@
         <el-button type="primary" @click="handleSubmit" :loading="submitting">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 厂商一键导入 Dialog -->
+    <el-dialog v-model="showBatchDialog" title="厂商一键导入模型" width="700px" top="5vh">
+      <el-alert type="info" :closable="false" class="mb-4">
+        选择厂商后，可批量导入该厂商的所有模型。已存在的模型会自动跳过。
+      </el-alert>
+
+      <el-form label-width="100px">
+        <el-form-item label="选择厂商">
+          <el-select v-model="batchProvider" class="w-full" @change="onBatchProviderChange" placeholder="选择要导入的厂商">
+            <el-option v-for="(label, key) in providerLabels" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="batchProvider" label="API 端点">
+          <el-input v-model="batchEndpoint" placeholder="API端点URL" />
+        </el-form-item>
+        <el-form-item v-if="batchProvider" label="API Key">
+          <el-input v-model="batchApiKey" type="password" show-password placeholder="输入API Key" />
+        </el-form-item>
+      </el-form>
+
+      <!-- 厂商模型预览 -->
+      <div v-if="batchProvider && batchModelList.length > 0" class="mt-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ providerLabels[batchProvider] }} 可用模型 ({{ batchModelList.length }}个)
+          </h3>
+          <div class="flex gap-2">
+            <el-button size="small" @click="batchSelectAll">全选</el-button>
+            <el-button size="small" @click="batchDeselectAll">全不选</el-button>
+            <el-button size="small" @click="batchSelectNew">仅选新增</el-button>
+          </div>
+        </div>
+        <div class="max-h-64 overflow-y-auto border rounded-lg p-2 dark:border-gray-600">
+          <div v-for="group in batchModelGroups" :key="group.label" class="mb-3">
+            <div class="text-xs font-semibold text-gray-500 mb-1 px-1">{{ group.label }}</div>
+            <el-checkbox-group v-model="batchSelected">
+              <div class="grid grid-cols-1 gap-1">
+                <el-checkbox
+                  v-for="m in group.models"
+                  :key="m.id"
+                  :label="m.id"
+                  :value="m.id"
+                  :disabled="isModelExist(m.id)"
+                  class="mx-1"
+                >
+                  <span>{{ m.id }}</span>
+                  <span v-if="m.note" class="text-gray-400 text-xs ml-1">({{ m.note }})</span>
+                  <el-tag v-if="isModelExist(m.id)" size="small" type="info" class="ml-1">已存在</el-tag>
+                </el-checkbox>
+              </div>
+            </el-checkbox-group>
+          </div>
+        </div>
+      </div>
+
+      <!-- 导入进度 -->
+      <div v-if="batchImporting" class="mt-4">
+        <el-progress :percentage="batchProgress" :format="() => `${batchDone}/${batchSelected.length}`" />
+        <p class="text-xs text-gray-500 mt-1">{{ batchStatusText }}</p>
+      </div>
+
+      <template #footer>
+        <el-button @click="showBatchDialog = false" :disabled="batchImporting">取消</el-button>
+        <el-button
+          type="primary"
+          @click="handleBatchImport"
+          :loading="batchImporting"
+          :disabled="batchSelected.length === 0 || !batchApiKey"
+        >
+          导入 {{ batchSelected.length > 0 ? `(${batchSelected.length}个模型)` : '' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi, type ModelConfig } from '@/api'
 
@@ -125,6 +223,7 @@ const showDialog = ref(false)
 const isEdit = ref(false)
 const editingId = ref('')
 const models = ref<ModelConfig[]>([])
+const activeProvider = ref('all')
 
 // ==================== 供应商与模型数据 ====================
 
@@ -170,6 +269,25 @@ const providerLabels: Record<string, string> = {
   meta: 'Meta (Llama)',
   xai: 'xAI (Grok)',
   custom: '自定义',
+}
+
+const providerTagTypes: Record<string, string> = {
+  openai: 'success',
+  azure: '',
+  claude: 'warning',
+  gemini: 'primary',
+  deepseek: '',
+  qwen: 'danger',
+  doubao: '',
+  zhipu: 'success',
+  moonshot: '',
+  wenxin: 'warning',
+  spark: '',
+  custom: 'info',
+}
+
+function providerTagType(provider: string): string {
+  return providerTagTypes[provider] || ''
 }
 
 const providerConfigs: Record<string, ProviderConfig> = {
@@ -624,7 +742,6 @@ const discoveredModels = ref<string[]>([])
 const discovering = ref(false)
 
 const currentModelGroups = computed<ModelGroup[]>(() => {
-  // 如果有动态发现的模型，合并到静态配置中
   if (discoveredModels.value.length > 0) {
     const staticConfig = providerConfigs[formData.provider]
     const staticIds = new Set<string>()
@@ -633,7 +750,6 @@ const currentModelGroups = computed<ModelGroup[]>(() => {
         for (const m of g.models) staticIds.add(m.id)
       }
     }
-    // 找出静态配置中没有的新模型
     const newIds = discoveredModels.value.filter(id => !staticIds.has(id))
     const groups: ModelGroup[] = staticConfig ? [...staticConfig.models] : []
     if (newIds.length > 0) {
@@ -678,7 +794,6 @@ async function onProviderChange(provider: string) {
   formData.model_id = ''
   formData.name = ''
   discoveredModels.value = []
-  // 如果有 API Key 且端点已知，自动发现模型
   if (formData.api_key && formData.endpoint && provider !== 'custom') {
     await discoverModels()
   }
@@ -689,7 +804,6 @@ function onModelSelect(modelId: string) {
   if (!modelId) return
   formData.name = modelId
 
-  // 查找模型配置中的价格等信息
   const config = providerConfigs[formData.provider]
   if (config) {
     for (const group of config.models) {
@@ -704,6 +818,27 @@ function onModelSelect(modelId: string) {
       }
     }
   }
+}
+
+// ==================== 厂商分组与过滤 ====================
+
+const usedProviders = computed(() => {
+  const provSet = new Set<string>()
+  models.value.forEach(m => { if (m.provider) provSet.add(m.provider) })
+  return Array.from(provSet).sort()
+})
+
+function providerModelCount(provider: string): number {
+  return models.value.filter(m => m.provider === provider).length
+}
+
+const filteredModels = computed(() => {
+  if (activeProvider.value === 'all') return models.value
+  return models.value.filter(m => m.provider === activeProvider.value)
+})
+
+function onProviderTabChange() {
+  // 切换tab时不需要额外操作
 }
 
 // ==================== 表单与API逻辑 ====================
@@ -817,6 +952,142 @@ async function handleDelete(row: ModelConfig) {
   } catch (e) {
     // cancelled or error
   }
+}
+
+// ==================== 厂商一键导入 ====================
+
+const showBatchDialog = ref(false)
+const batchProvider = ref('')
+const batchEndpoint = ref('')
+const batchApiKey = ref('')
+const batchSelected = ref<string[]>([])
+const batchImporting = ref(false)
+const batchDone = ref(0)
+const batchProgress = computed(() =>
+  batchSelected.value.length > 0 ? Math.round((batchDone.value / batchSelected.value.length) * 100) : 0
+)
+const batchStatusText = ref('')
+
+const batchModelList = computed<ModelItem[]>(() => {
+  const config = providerConfigs[batchProvider.value]
+  if (!config) return []
+  const list: ModelItem[] = []
+  for (const group of config.models) {
+    for (const m of group.models) {
+      if (m.id) list.push(m)
+    }
+  }
+  return list
+})
+
+const batchModelGroups = computed<ModelGroup[]>(() => {
+  const config = providerConfigs[batchProvider.value]
+  return config ? config.models.filter(g => g.models.some(m => m.id)) : []
+})
+
+function isModelExist(modelId: string): boolean {
+  return models.value.some(m => m.model_id === modelId)
+}
+
+function onBatchProviderChange(provider: string) {
+  const config = providerConfigs[provider]
+  batchEndpoint.value = config ? config.endpoint : ''
+  batchApiKey.value = ''
+  batchSelected.value = []
+  batchDone.value = 0
+  batchStatusText.value = ''
+  // 默认选中所有不存在的模型
+  if (config) {
+    const newIds: string[] = []
+    for (const group of config.models) {
+      for (const m of group.models) {
+        if (m.id && !isModelExist(m.id)) {
+          newIds.push(m.id)
+        }
+      }
+    }
+    batchSelected.value = newIds
+  }
+}
+
+function batchSelectAll() {
+  batchSelected.value = batchModelList.value.map(m => m.id)
+}
+
+function batchDeselectAll() {
+  batchSelected.value = []
+}
+
+function batchSelectNew() {
+  batchSelected.value = batchModelList.value.filter(m => !isModelExist(m.id)).map(m => m.id)
+}
+
+function findModelItem(provider: string, modelId: string): ModelItem | undefined {
+  const config = providerConfigs[provider]
+  if (!config) return undefined
+  for (const group of config.models) {
+    for (const m of group.models) {
+      if (m.id === modelId) return m
+    }
+  }
+  return undefined
+}
+
+async function handleBatchImport() {
+  if (batchSelected.value.length === 0) {
+    ElMessage.warning('请选择要导入的模型')
+    return
+  }
+  if (!batchApiKey.value) {
+    ElMessage.warning('请输入 API Key')
+    return
+  }
+
+  batchImporting.value = true
+  batchDone.value = 0
+  let successCount = 0
+  let skipCount = 0
+  let errorCount = 0
+
+  for (const modelId of batchSelected.value) {
+    batchStatusText.value = `正在导入 ${modelId}...`
+    const item = findModelItem(batchProvider.value, modelId)
+    try {
+      await adminApi.createModel({
+        name: modelId,
+        provider: batchProvider.value,
+        model_id: modelId,
+        endpoint: batchEndpoint.value,
+        api_key: batchApiKey.value,
+        input_price: item?.input_price ?? 0,
+        output_price: item?.output_price ?? 0,
+        max_tokens: item?.max_tokens ?? 4096,
+        weight: 50,
+        priority: 0,
+        streamable: true,
+        enabled: true,
+        currency: 'CNY',
+      })
+      successCount++
+    } catch (e: any) {
+      if (e?.response?.data?.error?.includes('already exist') || e?.response?.data?.error?.includes('重复')) {
+        skipCount++
+      } else {
+        errorCount++
+        console.error(`Failed to import ${modelId}:`, e)
+      }
+    }
+    batchDone.value++
+  }
+
+  batchImporting.value = false
+  batchStatusText.value = `导入完成：成功 ${successCount} 个，跳过 ${skipCount} 个，失败 ${errorCount} 个`
+  ElMessage.success(`批量导入完成！成功 ${successCount} 个，跳过 ${skipCount} 个，失败 ${errorCount} 个`)
+
+  await loadModels()
+  // 重置选择
+  batchSelected.value = []
+  batchDone.value = 0
 }
 
 onMounted(() => {

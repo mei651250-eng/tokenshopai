@@ -197,3 +197,44 @@ func (r *ModelRouter) GetAllModels() []*gateway.ModelConfig {
 	}
 	return all
 }
+
+// GetConverterForModel 根据模型名获取协议转换器
+func (r *ModelRouter) GetConverterForModel(req *gateway.ChatRequest) (protocol.ProtocolConverter, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	instances, ok := r.models[req.Model]
+	if ok && len(instances) > 0 {
+		converter, err := r.registry.Get(instances[0].Provider)
+		if err == nil {
+			return converter, nil
+		}
+	}
+
+	// 根据 provider 字段猜测
+	if req.ChannelEndpoint != "" {
+		// 尝试从已注册模型中匹配
+		for _, instances := range r.models {
+			for _, m := range instances {
+				if m.Name == req.Model {
+					converter, err := r.registry.Get(m.Provider)
+					if err == nil {
+						return converter, nil
+					}
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no converter found for model: %s", req.Model)
+}
+
+// GetDefaultConverter 获取默认的 OpenAI 兼容转换器
+func (r *ModelRouter) GetDefaultConverter() protocol.ProtocolConverter {
+	converter, err := r.registry.Get(gateway.ProviderOpenAI)
+	if err != nil {
+		// 不应该发生，OpenAI 是默认注册的
+		return nil
+	}
+	return converter
+}

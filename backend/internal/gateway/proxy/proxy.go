@@ -245,3 +245,167 @@ func (p *AIProxy) ProxyStream(
 		Attempt:  routeResult.Attempt,
 	}, nil
 }
+
+// ProxyWithChannel 使用渠道路由的代理请求（非流式）
+// 当 ChatRequest 包含 ChannelEndpoint/ChannelAPIKey 时使用渠道指定的上游
+func (p *AIProxy) ProxyWithChannel(ctx context.Context, req *gateway.ChatRequest) (*ProxyResult, error) {
+	if req.TraceID == "" {
+		req.TraceID = uuid.New().String()
+	}
+
+	// 使用渠道路由时，通过 ModelRouter 获取协议转换器，但用渠道的 endpoint/apiKey
+	// 先尝试从 ModelRouter 获取转换器
+	converter, err := p.router.GetConverterForModel(req)
+	if err != nil {
+		// fallback: 使用 OpenAI 兼容格式
+		converter = p.router.GetDefaultConverter()
+	}
+
+	start := time.Now()
+
+	p.logger.Info("proxying request via channel",
+		zap.String("trace_id", req.TraceID),
+		zap.String("model", req.Model),
+		zap.String("channel_id", req.ChannelID),
+	)
+
+	// 2. 协议转换
+	reqBody, err := converter.ConvertRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("convert request: %w", err)
+	}
+
+	// 3. 构建HTTP请求（使用渠道的 endpoint/apiKey）
+	httpReq, err := converter.BuildHTTPRequest(req.ChannelEndpoint, req.ChannelAPIKey, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("build http request: %w", err)
+	}
+	httpReq = httpReq.WithContext(ctx)
+
+	// 4. 发送请求
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	latency := time.Since(start)
+
+	// 5. 检查状态码
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("upstream error %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 6. 转换响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	chatResp, err := converter.ConvertResponse(body)
+	if err != nil {
+		return nil, fmt.Errorf("convert response: %w", err)
+	}
+
+	return &ProxyResult{
+		Response: chatResp,
+		Usage:    &chatResp.Usage,
+		Provider: converter.Provider(),
+		Latency:  latency,
+	}, nil
+}
+
+// ProxyStreamWithChannel 使用渠道路由的流式代理请求
+func (p *AIProxy) ProxyStreamWithChannel(
+	ctx context.Context,
+	req *gateway.ChatRequest,
+	onChunk func(chunk *StreamChunkResult) error,
+) (*ProxyResult, error) {
+	if req.TraceID == "" {
+		req.TraceID = uuid.New().String()
+	}
+	req.Stream = true
+
+	converter, err := p.router.GetConverterForModel(req)
+	if err != nil {
+		converter = p.router.GetDefaultConverter()
+	}
+
+	start := time.Now()
+
+	// 2. 协议转换
+	reqBody, err := converter.ConvertRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("convert request: %w", err)
+	}
+
+	// 3. 构建HTTP请求（使用渠道的 endpoint/apiKey）
+	streamClient := &http.Client{Timeout: p.streamTimeout}
+	httpReq, err := converter.BuildHTTPRequest(req.ChannelEndpoint, req.ChannelAPIKey, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("build http request: %w", err)
+	}
+	httpReq = httpReq.WithContext(ctx)
+
+	// 4. 发送请求
+	resp, err := streamClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send stream request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("upstream error %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 5. 流式读取
+	var totalUsage gateway.Usage
+	totalOutputTokens := 0
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0), 10*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
+
+		if line == "" {
+			continue
+		}
+
+		chunk, err := converter.ParseStreamChunk(line)
+		if err != nil {
+			if err == io.EOF {
+				onChunk(&StreamChunkResult{Done: true})
+				break
+			}
+			p.logger.Warn("parse stream chunk error", zap.Error(err))
+			continue
+		}
+		if chunk == nil {
+			continue
+		}
+
+		totalOutputTokens++
+
+		if err := onChunk(&StreamChunkResult{
+			Chunk: chunk,
+			Done:  false,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	latency := time.Since(start)
+
+	totalUsage.CompletionTokens = totalOutputTokens
+	totalUsage.TotalTokens = totalUsage.PromptTokens + totalUsage.CompletionTokens
+
+	return &ProxyResult{
+		Usage:    &totalUsage,
+		Provider: converter.Provider(),
+		Latency:  latency,
+	}, nil
+}

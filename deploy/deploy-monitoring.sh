@@ -106,7 +106,7 @@ groups:
           severity: warning
         annotations:
           summary: "API 错误率超过 5%"
-          description: "最近 5 分钟 API 5xx 错误率为 {{ $value | humanPercentage }}"
+          description: "最近 5 分钟 API 5xx 错误率过高"
 
       # 高延迟
       - alert: HighLatency
@@ -135,7 +135,7 @@ groups:
           severity: warning
         annotations:
           summary: "磁盘空间不足 15%"
-          description: "剩余 {{ $value | humanPercentage }}"
+          description: "磁盘剩余空间过低"
 
       # 内存不足
       - alert: MemoryLow

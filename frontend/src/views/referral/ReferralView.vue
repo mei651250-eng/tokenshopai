@@ -83,7 +83,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { adminApi } from '@/api'
+import { userApi } from '@/api'
 import { ElMessage } from 'element-plus'
 
 const myCode = ref('')
@@ -99,8 +99,8 @@ const stats = computed(() => {
 async function loadData() {
   try {
     const [codeRes, refsRes]: any[] = await Promise.all([
-      adminApi.getReferralCode(),
-      adminApi.getReferrals(),
+      userApi.getReferralCode(),
+      userApi.getReferrals(),
     ])
     myCode.value = codeRes.code || ''
     invites.value = refsRes.data || []

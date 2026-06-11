@@ -155,6 +155,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft } from '@element-plus/icons-vue'
+import { adminApi, default as api } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -173,12 +174,11 @@ const members = ref([
 async function loadTenant() {
   loading.value = true
   const id = route.params.id
-  // Mock data
-  tenant.value = {
-    id, name: `Tenant ${id}`, slug: `tenant-${id}`, status: 'active', plan: 'Enterprise',
-    region: 'cn', language: 'zh', currency: 'CNY',
-    user_count: 25, max_users: 100, api_key_count: 8, max_api_keys: 50,
-    monthly_usage: 15800, rpm_limit: 5000, tpm_limit: 2000000,
+  try {
+    const res: any = await api.get(`/admin/tenants/${id}`)
+    tenant.value = res.tenant || res.data || null
+  } catch (e) {
+    console.error('Failed to load tenant', e)
   }
   loading.value = false
 }

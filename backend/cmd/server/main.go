@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tokenhub/backend/internal/auth"
 	"github.com/tokenhub/backend/internal/billing"
+	"github.com/tokenhub/backend/internal/channel"
+	tokencore "github.com/tokenhub/backend/internal/token"
 	tokencache "github.com/tokenhub/backend/internal/cache"
 	"github.com/tokenhub/backend/internal/common/middleware"
 	"github.com/tokenhub/backend/internal/config"
@@ -162,6 +165,19 @@ func main() {
 	platformService.AutoMigrate()
 	platformService.SeedData(context.Background())
 
+	// 渠道服务（渠道管理+健康检查+Key轮换）
+	channelService := channel.NewChannelService(logger, db)
+	channelService.AutoMigrate()
+
+	// 启动渠道健康检查（每5分钟自动检测所有启用渠道，失败率>50%自动禁用）
+	healthChecker := channel.NewHealthChecker(channelService, logger, 5*time.Minute)
+	healthChecker.Start()
+	defer healthChecker.Stop()
+
+	// 令牌服务（sk-xxx令牌二次分发）
+	tokenService := tokencore.NewTokenService(logger, db)
+	tokenService.AutoMigrate()
+
 	// 验证码服务（短信+邮箱）
 	smsSender := auth.NewAliyunSMSSender("", "", "TokenHub", "SMS_123456")
 	emailSender := auth.NewSMTPEmailSender("smtp.tokenhub.com", 465, "", "", "noreply@tokenhub.com", "TokenHub")
@@ -242,7 +258,8 @@ func main() {
 				return
 			}
 		}
-		handleChatCompletion(c, aiProxy, billingService, desensitizer, logger)
+		// 渠道优先路由：优先查找渠道做负载均衡，无渠道时 fallback 到 ModelRouter
+		handleChatCompletionWithChannel(c, aiProxy, channelService, billingService, desensitizer, logger)
 	})
 		v1.POST("/completions", middleware.APIKeyMiddleware(rdb), func(c *gin.Context) {
 			handleCompletion(c, aiProxy, billingService, logger)
@@ -2383,6 +2400,489 @@ func main() {
 			db.Save(&prog)
 			c.JSON(http.StatusOK, prog)
 		})
+
+		// ============ 渠道管理 ============
+		// 列出渠道（支持筛选）
+		admin.GET("/channels", func(c *gin.Context) {
+			var enabled *bool
+			if v := c.Query("enabled"); v == "true" {
+				t := true
+				enabled = &t
+			} else if v == "false" {
+				f := false
+				enabled = &f
+			}
+			channels, err := channelService.ListChannels(c.Request.Context(), c.Query("provider"), c.Query("group"), c.Query("model_name"), enabled)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": channels})
+		})
+
+		// 获取渠道详情
+		admin.GET("/channels/:id", func(c *gin.Context) {
+			ch, err := channelService.GetChannel(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "channel not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": ch})
+		})
+
+		// 创建渠道
+		admin.POST("/channels", func(c *gin.Context) {
+			var ch channel.Channel
+			if err := c.ShouldBindJSON(&ch); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			tenantID := c.GetString("tenant_id")
+			if tenantID != "" {
+				ch.TenantID = tenantID
+			}
+			if err := channelService.CreateChannel(c.Request.Context(), &ch); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusCreated, gin.H{"data": ch})
+		})
+
+		// 更新渠道
+		admin.PUT("/channels/:id", func(c *gin.Context) {
+			var updates map[string]interface{}
+			if err := c.ShouldBindJSON(&updates); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := channelService.UpdateChannel(c.Request.Context(), c.Param("id"), updates); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "updated"})
+		})
+
+		// 删除渠道
+		admin.DELETE("/channels/:id", func(c *gin.Context) {
+			if err := channelService.DeleteChannel(c.Request.Context(), c.Param("id")); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		// 切换渠道启用/禁用
+		admin.PUT("/channels/:id/toggle", func(c *gin.Context) {
+			ch, err := channelService.GetChannel(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "channel not found"})
+				return
+			}
+			newEnabled := !ch.Enabled
+			if err := channelService.UpdateChannel(c.Request.Context(), c.Param("id"), map[string]interface{}{"enabled": newEnabled}); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"enabled": newEnabled})
+		})
+
+		// 测试渠道
+		admin.POST("/channels/:id/test", func(c *gin.Context) {
+			result := channelService.TestChannel(c.Request.Context(), c.Param("id"))
+			c.JSON(http.StatusOK, gin.H{"data": result})
+		})
+
+		// 批量测试渠道
+		admin.POST("/channels/batch-test", func(c *gin.Context) {
+			results := channelService.BatchTestChannels(c.Request.Context())
+			c.JSON(http.StatusOK, gin.H{"data": results})
+		})
+
+		// 渠道统计
+		admin.GET("/channels/stats", func(c *gin.Context) {
+			stats := channelService.GetChannelStats(c.Request.Context())
+			c.JSON(http.StatusOK, gin.H{"data": stats})
+		})
+
+		// ============ 令牌管理 ============
+		// 列出令牌
+		admin.GET("/tokens", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			tokens, err := tokenService.ListTokens(c.Request.Context(), userID, tenantID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": tokens})
+		})
+
+		// 获取令牌详情
+		admin.GET("/tokens/:id", func(c *gin.Context) {
+			t, err := tokenService.GetToken(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "token not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": t})
+		})
+
+		// 创建令牌
+		admin.POST("/tokens", func(c *gin.Context) {
+			var req tokencore.CreateTokenRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			t, err := tokenService.CreateToken(c.Request.Context(), userID, tenantID, &req)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusCreated, gin.H{"data": t})
+		})
+
+		// 吊销令牌
+		admin.PUT("/tokens/:id/revoke", func(c *gin.Context) {
+			if err := tokenService.RevokeToken(c.Request.Context(), c.Param("id")); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "revoked"})
+		})
+
+		// 删除令牌
+		admin.DELETE("/tokens/:id", func(c *gin.Context) {
+			if err := tokenService.DeleteToken(c.Request.Context(), c.Param("id")); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		// 更新令牌
+		admin.PUT("/tokens/:id", func(c *gin.Context) {
+			var req struct {
+				Name         string   `json:"name"`
+				QuotaTotal   *int64   `json:"quota_total"`
+				Models       []string `json:"models"`
+				AllowedIPs   []string `json:"allowed_ips"`
+				RateLimitRPM *int     `json:"rate_limit_rpm"`
+				RateLimitTPM *int     `json:"rate_limit_tpm"`
+				Group        string   `json:"group"`
+				ExpiresAt    *int64   `json:"expires_at"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			updates := map[string]interface{}{}
+			if req.Name != "" {
+				updates["name"] = req.Name
+			}
+			if req.QuotaTotal != nil {
+				updates["quota_total"] = *req.QuotaTotal
+			}
+			if req.Models != nil {
+				updates["models"] = req.Models
+			}
+			if req.AllowedIPs != nil {
+				updates["allowed_ips"] = req.AllowedIPs
+			}
+			if req.RateLimitRPM != nil {
+				updates["rate_limit_rpm"] = *req.RateLimitRPM
+			}
+			if req.RateLimitTPM != nil {
+				updates["rate_limit_tpm"] = *req.RateLimitTPM
+			}
+			if req.Group != "" {
+				updates["group_name"] = req.Group
+			}
+			if req.ExpiresAt != nil {
+				updates["expires_at"] = *req.ExpiresAt
+			}
+			if err := tokenService.UpdateToken(c.Request.Context(), c.Param("id"), updates); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "updated"})
+		})
+	}
+
+	// ============ 用户端 API（/user/）============
+	// 任何已认证用户均可访问，数据按 user_id 隔离
+	userGroup := engine.Group("/user")
+	userGroup.Use(middleware.AuthMiddleware(jwtManager))
+	{
+		// 用户余额
+		userGroup.GET("/balance", func(c *gin.Context) {
+			tenantID := c.GetString("tenant_id")
+			userID := c.GetString("user_id")
+			balance, err := billingService.GetBalance(c.Request.Context(), tenantID, userID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"balance": balance, "currency": cfg.Billing.DefaultCurrency})
+		})
+
+		// 用户 API Key 管理
+		userGroup.GET("/apikeys", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			var keys []auth.APIKey
+			query := db.Where("user_id = ? AND tenant_id = ?", userID, tenantID)
+			if err := query.Order("created_at DESC").Find(&keys).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			type APIKeySafe struct {
+				ID          string           `json:"id"`
+				Name        string           `json:"name"`
+				KeyPrefix   string           `json:"key_prefix"`
+				Permissions []auth.Permission `json:"permissions"`
+				Models      []string         `json:"models"`
+				RateLimit   int              `json:"rate_limit"`
+				QuotaDaily  int64            `json:"quota_daily"`
+				Status      auth.APIKeyStatus `json:"status"`
+				ExpiresAt   *time.Time       `json:"expires_at,omitempty"`
+				CreatedAt   time.Time        `json:"created_at"`
+				LastUsedAt  *time.Time       `json:"last_used_at,omitempty"`
+			}
+			safe := make([]APIKeySafe, 0, len(keys))
+			for _, k := range keys {
+				safe = append(safe, APIKeySafe{
+					ID: k.ID, Name: k.Name, KeyPrefix: k.KeyPrefix,
+					Permissions: k.Permissions, Models: k.Models,
+					RateLimit: k.RateLimit, QuotaDaily: k.QuotaDaily,
+					Status: k.Status, ExpiresAt: k.ExpiresAt,
+					CreatedAt: k.CreatedAt, LastUsedAt: k.LastUsedAt,
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"data": safe})
+		})
+
+		userGroup.POST("/apikeys", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			var req struct {
+				Name        string           `json:"name" binding:"required"`
+				Permissions []auth.Permission `json:"permissions"`
+				Models      []string         `json:"models"`
+				RateLimit   int              `json:"rate_limit"`
+				QuotaDaily  int64            `json:"quota_daily"`
+				ExpiresAt   *time.Time       `json:"expires_at"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			rawKey := "sk-" + generateSecureRandom(48)
+			hash := sha256.Sum256([]byte(rawKey))
+			keyHash := hex.EncodeToString(hash[:])
+			prefix := rawKey[:8]
+			if req.Permissions == nil {
+				req.Permissions = []auth.Permission{auth.PermModelRoute}
+			}
+			if req.RateLimit == 0 {
+				req.RateLimit = 60
+			}
+			if req.QuotaDaily == 0 {
+				req.QuotaDaily = 1000000
+			}
+			apiKey := &auth.APIKey{
+				ID: uuid.New().String(), TenantID: tenantID, UserID: userID,
+				Name: req.Name, KeyHash: keyHash, KeyPrefix: prefix,
+				Permissions: req.Permissions, Models: req.Models,
+				RateLimit: req.RateLimit, QuotaDaily: req.QuotaDaily,
+				Status: auth.APIKeyActive, ExpiresAt: req.ExpiresAt, CreatedAt: time.Now(),
+			}
+			if err := db.Create(apiKey).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"data": gin.H{"id": apiKey.ID, "name": apiKey.Name, "key": rawKey, "key_prefix": prefix, "status": apiKey.Status, "created_at": apiKey.CreatedAt},
+				"warning": "请妥善保存此 API Key，系统不会再次显示完整密钥",
+			})
+		})
+
+		userGroup.PUT("/apikeys/:id/revoke", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			id := c.Param("id")
+			result := db.Model(&auth.APIKey{}).Where("id = ? AND user_id = ? AND tenant_id = ?", id, userID, tenantID).Update("status", auth.APIKeyRevoked)
+			if result.RowsAffected == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "API Key not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "API Key revoked"})
+		})
+
+		userGroup.DELETE("/apikeys/:id", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			id := c.Param("id")
+			result := db.Where("id = ? AND user_id = ? AND tenant_id = ?", id, userID, tenantID).Delete(&auth.APIKey{})
+			if result.RowsAffected == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "API Key not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "API Key deleted"})
+		})
+
+		// 用户调用日志（最近 N 条计费记录）
+		userGroup.GET("/usage-logs", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			limit := 50
+			if l, err := strconv.Atoi(c.DefaultQuery("limit", "50")); err == nil && l > 0 && l <= 200 {
+				limit = l
+			}
+			offset := 0
+			if o, err := strconv.Atoi(c.DefaultQuery("offset", "0")); err == nil && o >= 0 {
+				offset = o
+			}
+			var records []billing.BillingRecord
+			query := db.Where("user_id = ? AND tenant_id = ?", userID, tenantID)
+			if model := c.Query("model"); model != "" {
+				query = query.Where("model_name = ?", model)
+			}
+			var total int64
+			query.Model(&billing.BillingRecord{}).Count(&total)
+			if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&records).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": records, "total": total, "limit": limit, "offset": offset})
+		})
+
+		// 用户月度统计
+		userGroup.GET("/stats/monthly", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			now := time.Now()
+			startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+			var result struct {
+				TotalTokens  int64 `json:"total_tokens"`
+				TotalAmount  int64 `json:"total_amount"`
+				RequestCount int64 `json:"request_count"`
+			}
+			db.Model(&billing.BillingRecord{}).
+				Where("user_id = ? AND tenant_id = ? AND created_at >= ?", userID, tenantID, startOfMonth.Unix()).
+				Select("COALESCE(SUM(total_tokens),0) as total_tokens, COALESCE(SUM(amount),0) as total_amount, COUNT(*) as request_count").
+				Scan(&result)
+			c.JSON(http.StatusOK, gin.H{"data": result})
+		})
+
+		// 用户邀请码
+		userGroup.GET("/referral-code", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			code := fmt.Sprintf("INV-%s", userID[:8])
+			c.JSON(http.StatusOK, gin.H{"code": code})
+		})
+
+		// 用户邀请记录
+		userGroup.GET("/referrals", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			var refs []ReferralInvite
+			db.Where("inviter_id = ?", userID).Order("created_at DESC").Find(&refs)
+			c.JSON(http.StatusOK, gin.H{"data": refs})
+		})
+
+		// 兑换码兑换
+		userGroup.POST("/redeem", func(c *gin.Context) {
+			var req struct {
+				Code string `json:"code" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			var code RedeemCode
+			if err := db.Where("code = ? AND status = ?", req.Code, "active").First(&code).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "兑换码无效或已使用"})
+				return
+			}
+			if code.ExpiresAt > 0 && code.ExpiresAt < time.Now().Unix() {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "兑换码已过期"})
+				return
+			}
+			tenantID := c.GetString("tenant_id")
+			userID := c.GetString("user_id")
+			amountCents := int64(code.Amount * 100)
+			if err := billingService.TopUp(c.Request.Context(), tenantID, userID, amountCents); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			db.Model(&code).Updates(map[string]interface{}{"status": "used", "used_by": userID, "used_at": time.Now().Unix()})
+			c.JSON(http.StatusOK, gin.H{"message": "兑换成功", "amount": code.Amount})
+		})
+
+		// 用户个人资料
+		userGroup.GET("/profile", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			var user struct {
+				ID          string `json:"id"`
+				Email       string `json:"email"`
+				Role        string `json:"role"`
+				DisplayName string `json:"display_name"`
+				AvatarURL   string `json:"avatar_url"`
+				CreatedAt   string `json:"created_at"`
+			}
+			if err := db.Table("users").Where("id = ?", userID).Select("id, email, role, display_name, avatar_url, created_at").Scan(&user).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": user})
+		})
+
+		userGroup.PUT("/profile", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			var req struct {
+				DisplayName string `json:"display_name"`
+				Phone       string `json:"phone"`
+				Company     string `json:"company"`
+				Bio         string `json:"bio"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			updates := map[string]interface{}{}
+			if req.DisplayName != "" {
+				updates["display_name"] = req.DisplayName
+			}
+			if req.Phone != "" {
+				updates["phone"] = req.Phone
+			}
+			if req.Company != "" {
+				updates["company"] = req.Company
+			}
+			if req.Bio != "" {
+				updates["bio"] = req.Bio
+			}
+			if len(updates) > 0 {
+				db.Table("users").Where("id = ?", userID).Updates(updates)
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "profile updated"})
+		})
+
+		// 可用模型列表（用户视角，仅返回启用的模型）
+		userGroup.GET("/models", func(c *gin.Context) {
+			var models []gateway.ModelConfig
+			query := db.Where("enabled = ?", true)
+			if provider := c.Query("provider"); provider != "" {
+				query = query.Where("provider = ?", provider)
+			}
+			if err := query.Select("id, name, provider, model_id, input_price, output_price, currency, max_tokens, tags, streamable").Order("provider, name").Find(&models).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": models})
+		})
 	}
 
 	// 公开模型广场接口（无需认证）
@@ -2662,6 +3162,8 @@ func autoMigrate(db *gorm.DB, logger *zap.Logger) {
 		&ReferralInvite{},
 		&OAuthAccount{},
 		&OnboardingProgress{},
+		&channel.Channel{},
+		&tokencore.AccessToken{},
 	); err != nil {
 		logger.Fatal("Failed to auto migrate database", zap.Error(err))
 	}
@@ -2739,6 +3241,220 @@ func initSuperAdmin(db *gorm.DB, logger *zap.Logger) {
 		zap.String("username", "admin"),
 		zap.String("role", string(auth.RoleSuperAdmin)),
 	)
+}
+
+// handleChatCompletionWithChannel 渠道优先路由的Chat Completion处理
+// 优先查找渠道做负载均衡/Key轮换/自动重试，无可用渠道时 fallback 到原有 ModelRouter
+func handleChatCompletionWithChannel(
+	c *gin.Context,
+	aiProxy *proxy.AIProxy,
+	channelSvc *channel.ChannelService,
+	billingSvc *billing.BillingService,
+	desensitizer *desensitize.Desensitizer,
+	logger *zap.Logger,
+) {
+	var req struct {
+		Model    string `json:"model"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+		Stream      bool     `json:"stream"`
+		MaxTokens   *int     `json:"max_tokens,omitempty"`
+		Temperature *float64 `json:"temperature,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": map[string]string{
+				"code":    "invalid_request",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	tenantID := c.GetString("tenant_id")
+	userID := c.GetString("user_id")
+
+	// 1. 尝试渠道路由
+	channels, err := channelSvc.GetChannelsForModel(c.Request.Context(), req.Model, tenantID)
+	if err == nil && len(channels) > 0 {
+		// 渠道亲和性：同一用户尽量路由到同一渠道
+		affinityID := channelSvc.GetAffinity(userID)
+		var selected *channel.Channel
+		for _, ch := range channels {
+			if ch.ID == affinityID && ch.Enabled {
+				selected = ch
+				break
+			}
+		}
+		if selected == nil {
+			// 按优先级+权重选择第一个可用渠道
+			selected = channels[0]
+		}
+
+		// Key轮换
+		apiKey := channelSvc.GetCurrentAPIKey(selected)
+		channelSvc.SetAffinity(userID, selected.ID)
+
+		logger.Info("channel routed request",
+			zap.String("model", req.Model),
+			zap.String("channel_id", selected.ID),
+			zap.String("provider", string(selected.Provider)),
+		)
+
+		// 构造 ChatRequest 使用渠道的 endpoint/apiKey
+		chatReq := &gateway.ChatRequest{
+			Model:    req.Model,
+			Stream:   req.Stream,
+			TenantID: tenantID,
+			APIKeyID: c.GetString("api_key_id"),
+			TraceID:  c.GetString("request_id"),
+			MaxTokens: req.MaxTokens,
+		}
+		for _, msg := range req.Messages {
+			chatReq.Messages = append(chatReq.Messages, gateway.ChatMessage{
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
+		}
+
+		// 通过渠道路由的请求：直接使用 proxy 但覆盖路由结果中的 endpoint/apiKey
+		// 这里用一个简化的方式：在 ChatRequest 上标记渠道路由信息
+		chatReq.ChannelEndpoint = selected.Endpoint
+		chatReq.ChannelAPIKey = apiKey
+		chatReq.ChannelID = selected.ID
+
+		if req.Stream {
+			handleStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, chatReq, logger)
+		} else {
+			handleNonStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, desensitizer, chatReq, logger)
+		}
+		return
+	}
+
+	// 2. 无可用渠道，fallback 到原有 ModelRouter
+	chatReq := &gateway.ChatRequest{
+		Model:    req.Model,
+		Stream:   req.Stream,
+		TenantID: tenantID,
+		APIKeyID: c.GetString("api_key_id"),
+		TraceID:  c.GetString("request_id"),
+		MaxTokens: req.MaxTokens,
+	}
+	for _, msg := range req.Messages {
+		chatReq.Messages = append(chatReq.Messages, gateway.ChatMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+
+	if req.Stream {
+		handleStreamResponse(c, aiProxy, billingSvc, chatReq, logger)
+	} else {
+		handleNonStreamResponse(c, aiProxy, billingSvc, desensitizer, chatReq, logger)
+	}
+}
+
+// handleNonStreamResponseWithChannel 使用渠道的非流式响应
+func handleNonStreamResponseWithChannel(
+	c *gin.Context,
+	aiProxy *proxy.AIProxy,
+	channelSvc *channel.ChannelService,
+	billingSvc *billing.BillingService,
+	desensitizer *desensitize.Desensitizer,
+	req *gateway.ChatRequest,
+	logger *zap.Logger,
+) {
+	start := time.Now()
+
+	// 使用渠道路由代理请求
+	result, err := aiProxy.ProxyWithChannel(c.Request.Context(), req)
+	if err != nil {
+		channelSvc.RecordFailure(c.Request.Context(), req.ChannelID, err.Error())
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": map[string]string{
+				"code":    "upstream_error",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	channelSvc.RecordSuccess(c.Request.Context(), req.ChannelID, int(time.Since(start).Milliseconds()))
+	logger.Info("channel request completed",
+		zap.String("channel_id", req.ChannelID),
+		zap.Duration("latency", time.Since(start)),
+	)
+
+	// 脱敏处理响应
+	if result.Response != nil && len(result.Response.Choices) > 0 && result.Response.Choices[0].Message != nil {
+		result.Response.Choices[0].Message.Content = desensitizer.Desensitize(
+			result.Response.Choices[0].Message.Content,
+		)
+	}
+
+	// 扣费
+	if result.Usage != nil {
+		_, _ = billingSvc.DeductBalance(c.Request.Context(), &billing.DeductRequest{
+			TenantID: req.TenantID,
+			UserID:   req.User,
+			Usage:    result.Usage,
+			TraceID:  req.TraceID,
+			Currency: "CNY",
+		})
+	}
+
+	c.JSON(http.StatusOK, result.Response)
+}
+
+// handleStreamResponseWithChannel 使用渠道的流式响应
+func handleStreamResponseWithChannel(
+	c *gin.Context,
+	aiProxy *proxy.AIProxy,
+	channelSvc *channel.ChannelService,
+	billingSvc *billing.BillingService,
+	req *gateway.ChatRequest,
+	logger *zap.Logger,
+) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	start := time.Now()
+
+	result, err := aiProxy.ProxyStreamWithChannel(c.Request.Context(), req, func(chunk *proxy.StreamChunkResult) error {
+		if chunk.Done {
+			c.SSEvent("message", "[DONE]")
+			return nil
+		}
+		if chunk.Chunk != nil {
+			c.SSEvent("message", chunk.Chunk)
+		}
+		return nil
+	})
+
+	if err != nil {
+		channelSvc.RecordFailure(c.Request.Context(), req.ChannelID, err.Error())
+		logger.Error("channel stream proxy failed", zap.Error(err))
+		return
+	}
+
+	channelSvc.RecordSuccess(c.Request.Context(), req.ChannelID, int(time.Since(start).Milliseconds()))
+
+	// 流式扣费
+	if result != nil && result.Usage != nil {
+		_, _ = billingSvc.DeductBalance(c.Request.Context(), &billing.DeductRequest{
+			TenantID: req.TenantID,
+			UserID:   req.User,
+			Usage:    result.Usage,
+			TraceID:  req.TraceID,
+			Currency: "CNY",
+		})
+	}
+
+	c.Writer.Flush()
 }
 
 // handleChatCompletion 处理Chat Completion请求

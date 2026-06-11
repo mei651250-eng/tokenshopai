@@ -286,6 +286,137 @@ func (c *WenxinConverter) ParseStreamChunk(line string) (*gateway.StreamChunk, e
 	return chunk, nil
 }
 
+// --- Gemini 协议转换器 ---
+
+type GeminiConverter struct{}
+
+type geminiRequest struct {
+	Contents []geminiContent `json:"contents"`
+	GenerationConfig *geminiGenConfig `json:"generationConfig,omitempty"`
+}
+
+type geminiContent struct {
+	Role  string       `json:"role"`
+	Parts []geminiPart `json:"parts"`
+}
+
+type geminiPart struct {
+	Text string `json:"text"`
+}
+
+type geminiGenConfig struct {
+	Temperature     *float64 `json:"temperature,omitempty"`
+	TopP            *float64 `json:"topP,omitempty"`
+	MaxOutputTokens *int     `json:"maxOutputTokens,omitempty"`
+}
+
+type geminiResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
+	UsageMetadata struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
+}
+
+func (c *GeminiConverter) Provider() gateway.ModelProvider {
+	return gateway.ProviderGemini
+}
+
+func (c *GeminiConverter) ConvertRequest(req *gateway.ChatRequest) ([]byte, error) {
+	geminiReq := geminiRequest{}
+
+	for _, msg := range req.Messages {
+		role := "user"
+		if msg.Role == "assistant" {
+			role = "model"
+		}
+		geminiReq.Contents = append(geminiReq.Contents, geminiContent{
+			Role:  role,
+			Parts: []geminiPart{{Text: msg.Content}},
+		})
+	}
+
+	geminiReq.GenerationConfig = &geminiGenConfig{
+		Temperature:     req.Temperature,
+		TopP:            req.TopP,
+		MaxOutputTokens: req.MaxTokens,
+	}
+
+	return json.Marshal(geminiReq)
+}
+
+func (c *GeminiConverter) ConvertResponse(body []byte) (*gateway.ChatResponse, error) {
+	var geminiResp geminiResponse
+	if err := json.Unmarshal(body, &geminiResp); err != nil {
+		return nil, fmt.Errorf("unmarshal gemini response: %w", err)
+	}
+
+	content := ""
+	if len(geminiResp.Candidates) > 0 && len(geminiResp.Candidates[0].Content.Parts) > 0 {
+		content = geminiResp.Candidates[0].Content.Parts[0].Text
+	}
+
+	finishReason := "stop"
+	return &gateway.ChatResponse{
+		Object:  "chat.completion",
+		Choices: []gateway.Choice{{
+			Index:        0,
+			Message:      &gateway.ChatMessage{Role: "assistant", Content: content},
+			FinishReason: &finishReason,
+		}},
+		Usage: gateway.Usage{
+			PromptTokens:     geminiResp.UsageMetadata.PromptTokenCount,
+			CompletionTokens: geminiResp.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:      geminiResp.UsageMetadata.TotalTokenCount,
+		},
+	}, nil
+}
+
+func (c *GeminiConverter) BuildHTTPRequest(endpoint, apiKey string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequest("POST", endpoint+"/v1beta/models/"+":generateContent?key="+apiKey, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
+func (c *GeminiConverter) ParseStreamChunk(line string) (*gateway.StreamChunk, error) {
+	if len(line) < 6 || line[:6] != "data: " {
+		return nil, nil
+	}
+	data := line[6:]
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(data), &raw); err != nil {
+		return nil, err
+	}
+	chunk := &gateway.StreamChunk{Object: "chat.completion.chunk"}
+	if candidates, ok := raw["candidates"].([]interface{}); ok && len(candidates) > 0 {
+		if cand, ok := candidates[0].(map[string]interface{}); ok {
+			if content, ok := cand["content"].(map[string]interface{}); ok {
+				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
+					if part, ok := parts[0].(map[string]interface{}); ok {
+						if text, ok := part["text"].(string); ok {
+							chunk.Choices = []gateway.Choice{{
+								Index: 0,
+								Delta: &gateway.ChatMessage{Role: "assistant", Content: text},
+							}}
+						}
+					}
+				}
+			}
+		}
+	}
+	return chunk, nil
+}
+
 // ConverterRegistry 转换器注册表
 type ConverterRegistry struct {
 	converters map[gateway.ModelProvider]ProtocolConverter
@@ -299,6 +430,7 @@ func NewConverterRegistry() *ConverterRegistry {
 	r.Register(&OpenAIConverter{})
 	r.Register(&ClaudeConverter{})
 	r.Register(&WenxinConverter{})
+	r.Register(&GeminiConverter{})
 	return r
 }
 

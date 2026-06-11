@@ -139,7 +139,7 @@ api_key  = "{{ newKeyValue }}"</pre>
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { adminApi } from '@/api'
+import { adminApi, userApi } from '@/api'
 
 interface ApiKeyItem {
   id: string
@@ -162,13 +162,18 @@ const showKeyDialog = ref(false)
 const creating = ref(false)
 const newKeyValue = ref('')
 
-const commonModels = [
-  'gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini',
-  'claude-4-sonnet', 'claude-4-opus',
-  'gemini-2.5-pro', 'deepseek-r1', 'deepseek-v3',
-  'qwen-max', 'glm-4-plus', 'doubao-pro-32k',
-  'moonshot-v1-128k', 'text-embedding-3-large',
-]
+const commonModels = ref<string[]>([])
+
+async function loadModelOptions() {
+  try {
+    const res: any = await userApi.getModels()
+    const models = res.data || []
+    commonModels.value = models.map((m: any) => m.model_id || m.name).filter(Boolean)
+  } catch { /* fallback */ }
+  if (commonModels.value.length === 0) {
+    commonModels.value = ['gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'claude-4-sonnet', 'claude-4-opus', 'gemini-2.5-pro', 'deepseek-r1', 'deepseek-v3', 'qwen-max', 'glm-4-plus']
+  }
+}
 
 const createForm = reactive({
   name: '',
@@ -191,7 +196,7 @@ function formatDate(d: string): string {
 async function loadKeys() {
   loading.value = true
   try {
-    const res: any = await adminApi.getApiKeys()
+    const res: any = await userApi.getApiKeys()
     keys.value = res.data || []
   } catch (e: any) {
     ElMessage.error(e.message || '加载密钥列表失败')
@@ -207,7 +212,7 @@ async function handleCreate() {
   }
   creating.value = true
   try {
-    const res: any = await adminApi.createApiKey({
+    const res: any = await userApi.createApiKey({
       name: createForm.name,
       rate_limit: createForm.rate_limit,
       quota_daily: createForm.quota_daily,
@@ -236,7 +241,7 @@ async function handleCreate() {
 async function handleRevoke(key: ApiKeyItem) {
   try {
     await ElMessageBox.confirm(`确定要吊销密钥「${key.name}」吗？吊销后使用此密钥的请求将被拒绝。`, '吊销密钥', { type: 'warning' })
-    await adminApi.revokeApiKey(key.id)
+    await userApi.revokeApiKey(key.id)
     ElMessage.success('密钥已吊销')
     loadKeys()
   } catch {}
@@ -245,7 +250,7 @@ async function handleRevoke(key: ApiKeyItem) {
 async function handleDelete(key: ApiKeyItem) {
   try {
     await ElMessageBox.confirm(`确定要删除密钥「${key.name}」吗？此操作不可恢复。`, '删除密钥', { type: 'error' })
-    await adminApi.deleteApiKey(key.id)
+    await userApi.deleteApiKey(key.id)
     ElMessage.success('密钥已删除')
     loadKeys()
   } catch {}
@@ -256,7 +261,10 @@ function copyKey() {
   ElMessage.success('已复制到剪贴板')
 }
 
-onMounted(loadKeys)
+onMounted(() => {
+  loadKeys()
+  loadModelOptions()
+})
 </script>
 
 <style scoped>

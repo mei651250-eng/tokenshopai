@@ -174,6 +174,9 @@
               <el-dropdown-item command="profile">
                 <el-icon class="mr-2"><User /></el-icon>{{ t('nav.profile') }}
               </el-dropdown-item>
+              <el-dropdown-item command="userportal">
+                <el-icon class="mr-2"><ShoppingCart /></el-icon>返回用户端
+              </el-dropdown-item>
               <el-dropdown-item divided command="logout">
                 <el-icon class="mr-2"><SwitchButton /></el-icon>{{ t('nav.logout') }}
               </el-dropdown-item>
@@ -282,34 +285,32 @@ const notifStore = useNotificationStore()
 const showSearch = ref(false)
 const searchQuery = ref('')
 
-const navItems = computed(() => [
-  { path: '/dashboard', label: t('nav.dashboard'), icon: DataBoard },
-  { path: '/apikeys', label: 'API 密钥', icon: Key },
-  { path: '/marketplace', label: '模型广场', icon: ShoppingCart },
-  { path: '/docs', label: 'API 文档', icon: Reading },
-  { path: '/models', label: t('nav.models'), icon: SetUp },
-  { path: '/billing', label: t('nav.billing'), icon: Money },
-  { path: '/wallet', label: t('nav.wallet'), icon: Wallet },
-  { path: '/payment', label: t('nav.payment'), icon: CreditCard },
-  { path: '/receiving', label: t('nav.receiving'), icon: Stamp },
-  { path: '/withdrawal', label: t('nav.withdrawal'), icon: Sell },
-  { path: '/quota', label: '配额管理', icon: Histogram },
-  { path: '/refund', label: '退款管理', icon: CircleCheck },
-  { path: '/reconciliation', label: '对账中心', icon: TrendCharts },
-  { path: '/distribution', label: '分销管理', icon: Connection },
-  { path: '/redeem-codes', label: '兑换码', icon: Present },
-  { path: '/announcements', label: '公告管理', icon: Notification },
-  { path: '/model-mappings', label: '模型映射', icon: Operation },
-  { path: '/user-groups', label: '用户组', icon: UserFilled },
-  { path: '/referrals', label: '邀请奖励', icon: Share },
-  { path: '/tenants', label: t('nav.tenants'), icon: OfficeBuilding },
-  { path: '/users', label: t('nav.users'), icon: UserIcon },
-  { path: '/audit', label: t('nav.audit'), icon: Tickets },
-  { path: '/security', label: t('nav.security'), icon: Lock },
-  { path: '/monitor', label: t('nav.monitor'), icon: Monitor },
-  { path: '/reports', label: t('nav.reports'), icon: Document },
-  { path: '/settings', label: t('nav.settings'), icon: Setting },
-])
+const allNavItems = [
+  { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DataBoard, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/models', label: t('nav.models'), icon: SetUp, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/channels', label: '渠道管理', icon: Connection, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/tokens', label: '令牌管理', icon: Key, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/tenants', label: t('nav.tenants'), icon: OfficeBuilding, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/users', label: t('nav.users'), icon: UserIcon, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/quota', label: '配额管理', icon: Histogram, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/reconciliation', label: '对账中心', icon: TrendCharts, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/distribution', label: '分销管理', icon: Connection, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/redeem-codes', label: '兑换码', icon: Present, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/announcements', label: '公告管理', icon: Notification, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/model-mappings', label: '模型映射', icon: Operation, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/user-groups', label: '用户组', icon: UserFilled, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/refund', label: '退款管理', icon: CircleCheck, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/audit', label: t('nav.audit'), icon: Tickets, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/settings', label: t('nav.settings'), icon: Setting, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/security', label: t('nav.security'), icon: Lock, roles: ['super_admin'] },
+  { path: '/admin/monitor', label: t('nav.monitor'), icon: Monitor, roles: ['super_admin', 'tenant_admin'] },
+  { path: '/admin/reports', label: t('nav.reports'), icon: Document, roles: ['super_admin', 'tenant_admin'] },
+]
+
+const navItems = computed(() => {
+  const role = userStore.role || ''
+  return allNavItems.filter(item => item.roles.includes(role))
+})
 
 const breadcrumbMap: Record<string, { label: string; path?: string }> = {}
 // Will be populated from navItems dynamically
@@ -379,6 +380,7 @@ function handleLogout() {
 
 function handleUserCommand(cmd: string) {
   if (cmd === 'profile') router.push('/profile')
+  else if (cmd === 'userportal') router.push('/home')
   else if (cmd === 'logout') handleLogout()
 }
 

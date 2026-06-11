@@ -58,6 +58,10 @@ type ChatRequest struct {
 	TenantID    string `json:"-"` // 由中间件注入
 	APIKeyID    string `json:"-"` // 由中间件注入
 	TraceID     string `json:"-"` // 链路追踪ID
+	// 渠道路由扩展字段
+	ChannelEndpoint string `json:"-"` // 渠道指定的端点
+	ChannelAPIKey   string `json:"-"` // 渠道指定的API Key
+	ChannelID       string `json:"-"` // 渠道ID，用于记录成功/失败
 }
 
 // ChatMessage 聊天消息

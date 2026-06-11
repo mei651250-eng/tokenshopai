@@ -108,6 +108,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import { adminApi, default as api } from '@/api'
 
 const { t } = useI18n()
 
@@ -120,19 +121,17 @@ const selectedTx = ref<any>(null)
 const typeTagMap: Record<string, string> = { charge: 'success', consume: 'warning', refund: 'info', withdraw: 'danger' }
 
 async function loadData() {
-  // Mock data for demo
-  const now = Date.now()
-  transactions.value = Array.from({ length: 20 }, (_, i) => ({
-    id: `TX${(10000 + i).toString()}`,
-    type: ['charge', 'consume', 'refund', 'withdraw'][i % 4],
-    amount: [100, -25.5, -10, -50, 200, -33.2][i % 6],
-    currency: 'CNY',
-    model_name: ['GPT-4o', 'Claude-3.5', 'GPT-4o-mini', 'Gemini Pro'][i % 4],
-    tokens: i % 2 === 0 ? [1500, 3200, 800, 4500, 200][i % 5] : 0,
-    status: ['success', 'success', 'pending', 'failed'][i % 4],
-    created_at: (now - i * 3600000) / 1000,
-  }))
-  total.value = 86
+  loading.value = true
+  try {
+    const res: any = await adminApi.getBalance()
+    const billingRes: any = await api.get('/admin/billing/transactions', { params: { ...filters.value, page: currentPage.value, page_size: pageSize.value } })
+    transactions.value = billingRes.transactions || billingRes.data || []
+    total.value = billingRes.total || transactions.value.length
+  } catch (e) {
+    console.error('Failed to load transactions', e)
+  } finally {
+    loading.value = false
+  }
 }
 
 function viewDetail(row: any) {

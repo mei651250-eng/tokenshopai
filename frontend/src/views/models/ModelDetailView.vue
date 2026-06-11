@@ -177,7 +177,7 @@ const testResult = ref('')
 const testLoading = ref(false)
 const testTemperature = ref(0.7)
 const rateLimit = ref({ rpm: 60, tpm: 100000, concurrency: 10, timeout: 30 })
-const apiBase = computed(() => import.meta.env.VITE_API_BASE_URL || 'https://api.example.com')
+const apiBase = computed(() => '')
 
 const trendOption = computed(() => ({
   tooltip: { trigger: 'axis' },
@@ -203,21 +203,14 @@ async function loadModel() {
     const id = route.params.id as string
     model.value = (Array.isArray(models) ? models : []).find((m: ModelConfig) => m.id === id) || null
     if (!model.value) {
-      // Use mock data for demo
-      model.value = {
-        id, name: id, provider: 'OpenAI', model_id: id,
-        input_price: 0.03, output_price: 0.06, currency: 'USD',
-        enabled: true, latency_ms: 320, success_rate: 0.995, weight: 100,
-        today_requests: 12580, total_tokens: 2850000,
-      } as any
+      // Model not found, redirect back
+      ElMessage.warning(t('models.notFound'))
+      router.push('/models')
+      return
     }
   } catch {
-    model.value = {
-      id: route.params.id as string, name: route.params.id as string, provider: 'OpenAI',
-      model_id: route.params.id as string, input_price: 0.03, output_price: 0.06,
-      currency: 'USD', enabled: true, latency_ms: 320, success_rate: 0.995, weight: 100,
-      today_requests: 12580, total_tokens: 2850000,
-    } as any
+    ElMessage.error(t('models.notFound'))
+    router.push('/models')
   } finally {
     loading.value = false
   }

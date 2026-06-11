@@ -122,7 +122,11 @@ async function handleLogin() {
   try {
     await userStore.login(form.email, form.password)
     ElMessage.success('登录成功')
-    const redirect = (route.query.redirect as string) || '/'
+    // 根据角色分流：管理员进管理端，普通用户进用户端
+    const role = localStorage.getItem('role') || ''
+    const isAdmin = role === 'super_admin' || role === 'tenant_admin'
+    const defaultPath = isAdmin ? '/admin/dashboard' : '/home'
+    const redirect = (route.query.redirect as string) || defaultPath
     router.push(redirect)
   } catch (e: any) {
     ElMessage.error(e.message || '登录失败')

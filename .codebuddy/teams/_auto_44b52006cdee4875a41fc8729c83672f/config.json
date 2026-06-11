@@ -1,0 +1,28 @@
+{
+  "name": "_auto_44b52006cdee4875a41fc8729c83672f",
+  "leadAgentId": "44b52006cdee4875a41fc8729c83672f",
+  "workspacePath": "c:\\Users\\71437\\CodeBuddy\\20260523051341",
+  "createdAt": "2026-06-11T06:25:22.213Z",
+  "options": {
+    "workspacePath": "c:\\Users\\71437\\CodeBuddy\\20260523051341",
+    "isAutoTeam": true
+  },
+  "members": [
+    {
+      "memberId": "team-lead@_auto_44b52006cdee4875a41fc8729c83672f",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    },
+    {
+      "memberId": "channel-backend@_auto_44b52006cdee4875a41fc8729c83672f",
+      "name": "channel-backend",
+      "role": "Implement Channel backend model"
+    },
+    {
+      "memberId": "channel-frontend@_auto_44b52006cdee4875a41fc8729c83672f",
+      "name": "channel-frontend",
+      "role": "Create Channel frontend page"
+    }
+  ],
+  "isAutoTeam": true
+}

@@ -3,7 +3,7 @@ import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 
 const api: AxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || (window.Capacitor ? 'http://localhost:8080' : ''),
+  baseURL: '',
   timeout: 5000,
   headers: {
     'Content-Type': 'application/json',
@@ -176,6 +176,41 @@ export const publicApi = {
   getAnnouncements: () => api.get('/public/announcements'),
 }
 
+// 用户端 API（/user/ 前缀，任何已认证用户可访问）
+export const userApi = {
+  // 余额
+  getBalance: () => api.get('/user/balance'),
+
+  // API Key 管理
+  getApiKeys: () => api.get('/user/apikeys'),
+  createApiKey: (data: { name: string; permissions?: string[]; models?: string[]; rate_limit?: number; quota_daily?: number; expires_at?: string }) =>
+    api.post('/user/apikeys', data),
+  revokeApiKey: (id: string) => api.put(`/user/apikeys/${id}/revoke`),
+  deleteApiKey: (id: string) => api.delete(`/user/apikeys/${id}`),
+
+  // 调用日志
+  getUsageLogs: (params?: { limit?: number; offset?: number; model?: string }) =>
+    api.get('/user/usage-logs', { params }),
+
+  // 月度统计
+  getMonthlyStats: () => api.get('/user/stats/monthly'),
+
+  // 邀请
+  getReferralCode: () => api.get('/user/referral-code'),
+  getReferrals: () => api.get('/user/referrals'),
+
+  // 兑换码
+  redeemCode: (code: string) => api.post('/user/redeem', { code }),
+
+  // 个人资料
+  getProfile: () => api.get('/user/profile'),
+  updateProfile: (data: { display_name?: string; phone?: string; company?: string; bio?: string }) =>
+    api.put('/user/profile', data),
+
+  // 可用模型列表
+  getModels: (provider?: string) => api.get('/user/models', { params: { provider } }),
+}
+
 export const adminApi = {
   // 模型管理
   getModels: () => api.get('/admin/models'),
@@ -245,6 +280,28 @@ export const adminApi = {
   getOnboarding: () => api.get('/admin/onboarding'),
   updateOnboarding: (data: { current_step?: number; completed?: boolean; skipped?: boolean }) =>
     api.put('/admin/onboarding', data),
+
+  // 渠道管理
+  listChannels: (params?: { provider?: string; model_name?: string; status?: string }) =>
+    api.get('/admin/channels', { params }),
+  getChannel: (id: string) => api.get(`/admin/channels/${id}`),
+  createChannel: (data: any) => api.post('/admin/channels', data),
+  updateChannel: (id: string, data: any) => api.put(`/admin/channels/${id}`, data),
+  deleteChannel: (id: string) => api.delete(`/admin/channels/${id}`),
+  toggleChannel: (id: string) => api.put(`/admin/channels/${id}/toggle`),
+  testChannel: (id: string) => api.post(`/admin/channels/${id}/test`),
+  batchTestChannels: () => api.post('/admin/channels/batch-test'),
+  getChannelStats: () => api.get('/admin/channels/stats'),
+
+  // 令牌管理（sk-xxx 二次分发）
+  listTokens: (params?: { user_id?: string; status?: string }) =>
+    api.get('/admin/tokens', { params }),
+  getToken: (id: string) => api.get(`/admin/tokens/${id}`),
+  createToken: (data: { name: string; quota_total?: number; models?: string[]; allowed_ips?: string[]; rate_limit_rpm?: number; rate_limit_tpm?: number; group?: string; expires_at?: number }) =>
+    api.post('/admin/tokens', data),
+  revokeToken: (id: string) => api.put(`/admin/tokens/${id}/revoke`),
+  deleteToken: (id: string) => api.delete(`/admin/tokens/${id}`),
+  updateToken: (id: string, data: any) => api.put(`/admin/tokens/${id}`, data),
 }
 
 // 钱包 API
