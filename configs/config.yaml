@@ -6,6 +6,8 @@ server:
   graceful_wait: 15s
   # WebAuthn Relying Party 配置
   webauthn_origin: "http://localhost:3001"  # 生产环境改为 https://tokenshopai.com
+  # 前端部署地址（OAuth 回调跳转）
+  frontend_url: "http://localhost:3001"  # 生产环境改为 https://tokenshopai.com
 
 database:
   host: localhost
@@ -224,6 +226,17 @@ i18n:
     - th-TH
     - tr-TR
     - nl-NL
+
+# OAuth 第三方登录配置
+oauth:
+  # Google OAuth - 从 https://console.cloud.google.com/apis/credentials 获取
+  # 回调地址: https://YOUR_DOMAIN/auth/oauth/google/callback
+  google_client_id: ""
+  google_client_secret: ""
+  # GitHub OAuth - 从 https://github.com/settings/developers 获取
+  # 回调地址: https://YOUR_DOMAIN/auth/oauth/github/callback
+  github_client_id: ""
+  github_client_secret: ""
 
 # 密钥保险库配置
 keyvault:

@@ -23,6 +23,14 @@ type Config struct {
 	I18n         I18nConfig         `mapstructure:"i18n"`
 	KeyVault     KeyVaultConfig     `mapstructure:"keyvault"`
 	Admin        AdminConfig        `mapstructure:"admin"`
+	OAuth        OAuthConfig        `mapstructure:"oauth"`
+}
+
+type OAuthConfig struct {
+	GoogleClientID     string `mapstructure:"google_client_id"`
+	GoogleClientSecret string `mapstructure:"google_client_secret"`
+	GitHubClientID     string `mapstructure:"github_client_id"`
+	GitHubClientSecret string `mapstructure:"github_client_secret"`
 }
 
 type KeyVaultConfig struct {
@@ -40,6 +48,7 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 	GracefulWait time.Duration `mapstructure:"graceful_wait"`
+	FrontendURL  string        `mapstructure:"frontend_url"`
 }
 
 type DatabaseConfig struct {
@@ -288,6 +297,11 @@ func Load(path string) (*Config, error) {
 	viper.BindEnv("database.password", "DB_PASSWORD")
 	viper.BindEnv("redis.password", "REDIS_PASSWORD")
 	viper.BindEnv("keyvault.master_key", "KEYVAULT_MASTER_KEY")
+	viper.BindEnv("oauth.google_client_id", "GOOGLE_CLIENT_ID")
+	viper.BindEnv("oauth.google_client_secret", "GOOGLE_CLIENT_SECRET")
+	viper.BindEnv("oauth.github_client_id", "GITHUB_CLIENT_ID")
+	viper.BindEnv("oauth.github_client_secret", "GITHUB_CLIENT_SECRET")
+	viper.BindEnv("server.frontend_url", "FRONTEND_URL")
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err

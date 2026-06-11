@@ -3178,7 +3178,7 @@ func main() {
 			handleOAuthRedirect(c, cfg, logger)
 		})
 		authGroup.GET("/oauth/:provider/callback", func(c *gin.Context) {
-			handleOAuthCallback(c, jwtManager, db, logger)
+			handleOAuthCallback(c, jwtManager, db, logger, cfg)
 		})
 
 		// 验证码登录/注册
@@ -4256,14 +4256,20 @@ func handleOAuthRedirect(c *gin.Context, cfg *config.Config, logger *zap.Logger)
 
 	switch provider {
 	case "github":
-		clientID = os.Getenv("GITHUB_CLIENT_ID")
+		clientID = cfg.OAuth.GitHubClientID
+		if clientID == "" {
+			clientID = os.Getenv("GITHUB_CLIENT_ID")
+		}
 		if clientID == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub OAuth not configured"})
 			return
 		}
 		authURL = fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&state=%s&scope=user:email", clientID, state)
 	case "google":
-		clientID = os.Getenv("GOOGLE_CLIENT_ID")
+		clientID = cfg.OAuth.GoogleClientID
+		if clientID == "" {
+			clientID = os.Getenv("GOOGLE_CLIENT_ID")
+		}
 		if clientID == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Google OAuth not configured"})
 			return
@@ -4281,7 +4287,7 @@ func handleOAuthRedirect(c *gin.Context, cfg *config.Config, logger *zap.Logger)
 }
 
 // handleOAuthCallback 处理 OAuth 回调
-func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, logger *zap.Logger) {
+func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, logger *zap.Logger, cfg *config.Config) {
 	provider := c.Param("provider")
 	code := c.Query("code")
 	state := c.Query("state")
@@ -4304,7 +4310,7 @@ func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.D
 	switch provider {
 	case "github":
 		var err error
-		accessToken, email, name, avatarURL, providerID, err = exchangeGitHubCode(code)
+		accessToken, email, name, avatarURL, providerID, err = exchangeGitHubCode(code, cfg)
 		if err != nil {
 			logger.Error("github oauth failed", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -4312,7 +4318,7 @@ func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.D
 		}
 	case "google":
 		var err error
-		accessToken, email, name, avatarURL, providerID, err = exchangeGoogleCode(code, c.Request.Host)
+		accessToken, email, name, avatarURL, providerID, err = exchangeGoogleCode(code, c.Request.Host, cfg)
 		if err != nil {
 			logger.Error("google oauth failed", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -4377,7 +4383,10 @@ func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.D
 	}
 
 	// 重定向前端并携带 token
-	frontendURL := os.Getenv("FRONTEND_URL")
+	frontendURL := cfg.Server.FrontendURL
+	if frontendURL == "" {
+		frontendURL = os.Getenv("FRONTEND_URL")
+	}
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3001"
 	}
@@ -4386,9 +4395,15 @@ func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.D
 }
 
 // exchangeGitHubCode 用 code 换取 GitHub 用户信息
-func exchangeGitHubCode(code string) (accessToken, email, name, avatarURL, providerID string, err error) {
-	clientID := os.Getenv("GITHUB_CLIENT_ID")
-	clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
+func exchangeGitHubCode(code string, cfg *config.Config) (accessToken, email, name, avatarURL, providerID string, err error) {
+	clientID := cfg.OAuth.GitHubClientID
+	if clientID == "" {
+		clientID = os.Getenv("GITHUB_CLIENT_ID")
+	}
+	clientSecret := cfg.OAuth.GitHubClientSecret
+	if clientSecret == "" {
+		clientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
+	}
 
 	// 换取 access_token
 	resp, err := http.Post(
@@ -4443,9 +4458,15 @@ func exchangeGitHubCode(code string) (accessToken, email, name, avatarURL, provi
 }
 
 // exchangeGoogleCode 用 code 换取 Google 用户信息
-func exchangeGoogleCode(code, host string) (accessToken, email, name, avatarURL, providerID string, err error) {
-	clientID := os.Getenv("GOOGLE_CLIENT_ID")
-	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+func exchangeGoogleCode(code, host string, cfg *config.Config) (accessToken, email, name, avatarURL, providerID string, err error) {
+	clientID := cfg.OAuth.GoogleClientID
+	if clientID == "" {
+		clientID = os.Getenv("GOOGLE_CLIENT_ID")
+	}
+	clientSecret := cfg.OAuth.GoogleClientSecret
+	if clientSecret == "" {
+		clientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
+	}
 	redirectURI := fmt.Sprintf("https://%s/auth/oauth/google/callback", host)
 
 	// 换取 token
