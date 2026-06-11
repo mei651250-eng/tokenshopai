@@ -12,8 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	btcecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/sha3"
@@ -305,7 +304,7 @@ func recoverEthPubKey(msgHash []byte, r, s *big.Int, v byte) (*ecdsa.PublicKey, 
 	copy(compactSig[1:33], rBytes)
 	copy(compactSig[33:65], sBytes)
 
-	pubKey, _, err := ecdsa.RecoverCompact(compactSig, msgHash)
+	pubKey, _, err := btcecdsa.RecoverCompact(compactSig, msgHash)
 	if err != nil {
 		return nil, fmt.Errorf("recover pubkey: %w", err)
 	}
