@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/url"
 	"sort"
@@ -265,10 +264,10 @@ func NewPaymentService(logger *zap.Logger, rdb *redis.Client, cfg *config.Paymen
 	svc.channels[ChannelAlipay] = NewAlipayProvider(cfg.Alipay.AppID, cfg.Alipay.PrivateKey, cfg.Alipay.PublicKey, cfg.Alipay.IsSandbox)
 	svc.channels[ChannelAlipayHK] = NewAlipayHKProvider(cfg.AlipayHK.AppID, cfg.AlipayHK.PrivateKey, cfg.AlipayHK.PublicKey, cfg.AlipayHK.IsSandbox)
 	svc.channels[ChannelWeChatPay] = NewWeChatPayProvider(cfg.WeChatPay.MchID, cfg.WeChatPay.APIKey, cfg.WeChatPay.CertPath, cfg.WeChatPay.IsSandbox)
-	svc.channels[ChannelPayPal] = NewPayPalProvider(cfg.PayPal.ClientID, cfg.PayPal.ClientSecret, cfg.PayPal.IsSandbox)
-	svc.channels[ChannelWorldFirst] = NewWorldFirstProvider(cfg.WorldFirst.APIKey, cfg.WorldFirst.SecretKey, cfg.WorldFirst.IsSandbox)
-	svc.channels[ChannelPayoneer] = NewPayoneerProvider(cfg.Payoneer.APIKey, cfg.Payoneer.SecretKey, cfg.Payoneer.IsSandbox)
-	svc.channels[ChannelWise] = NewWiseProvider(cfg.Wise.APIToken, cfg.Wise.WebhookKey, cfg.Wise.IsSandbox)
+	svc.channels[ChannelPayPal] = NewPayPalProvider(cfg.PayPal.ClientID, cfg.PayPal.ClientSecret, cfg.PayPal.Mode == "sandbox")
+	svc.channels[ChannelWorldFirst] = NewWorldFirstProvider(cfg.WorldFirst.APIKey, cfg.WorldFirst.APISecret)
+	svc.channels[ChannelPayoneer] = NewPayoneerProvider(cfg.Payoneer.APIKey, cfg.Payoneer.APISecret)
+	svc.channels[ChannelWise] = NewWiseProvider(cfg.Wise.APIKey, cfg.Wise.WebhookSecret)
 	svc.channels[ChannelStripe] = NewStripeProvider(cfg.Stripe.PublishableKey, cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret)
 
 	return svc
@@ -1045,11 +1044,10 @@ func (p *PayPalProvider) Refund(ctx context.Context, orderNo string, amount int6
 type WorldFirstProvider struct {
 	apiKey    string
 	secretKey string
-	isSandbox bool
 }
 
-func NewWorldFirstProvider(apiKey, secretKey string, isSandbox bool) *WorldFirstProvider {
-	return &WorldFirstProvider{apiKey: apiKey, secretKey: secretKey, isSandbox: isSandbox}
+func NewWorldFirstProvider(apiKey, secretKey string) *WorldFirstProvider {
+	return &WorldFirstProvider{apiKey: apiKey, secretKey: secretKey}
 }
 
 func (p *WorldFirstProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
@@ -1057,9 +1055,6 @@ func (p *WorldFirstProvider) CreateOrder(ctx context.Context, order *PaymentOrde
 		return nil, fmt.Errorf("worldfirst not configured")
 	}
 	baseURL := "https://api.worldfirst.com"
-	if p.isSandbox {
-		baseURL = "https://api-sandbox.worldfirst.com"
-	}
 	order.RedirectURL = fmt.Sprintf("%s/pay?ref=%s", baseURL, order.OrderNo)
 	return order, nil
 }
@@ -1105,11 +1100,10 @@ func (p *WorldFirstProvider) Refund(ctx context.Context, orderNo string, amount 
 type PayoneerProvider struct {
 	apiKey    string
 	secretKey string
-	isSandbox bool
 }
 
-func NewPayoneerProvider(apiKey, secretKey string, isSandbox bool) *PayoneerProvider {
-	return &PayoneerProvider{apiKey: apiKey, secretKey: secretKey, isSandbox: isSandbox}
+func NewPayoneerProvider(apiKey, secretKey string) *PayoneerProvider {
+	return &PayoneerProvider{apiKey: apiKey, secretKey: secretKey}
 }
 
 func (p *PayoneerProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
@@ -1117,9 +1111,6 @@ func (p *PayoneerProvider) CreateOrder(ctx context.Context, order *PaymentOrder)
 		return nil, fmt.Errorf("payoneer not configured")
 	}
 	baseURL := "https://api.payoneer.com"
-	if p.isSandbox {
-		baseURL = "https://api.sandbox.payoneer.com"
-	}
 	order.RedirectURL = fmt.Sprintf("%s/checkout?ref=%s", baseURL, order.OrderNo)
 	return order, nil
 }
@@ -1165,11 +1156,10 @@ func (p *PayoneerProvider) Refund(ctx context.Context, orderNo string, amount in
 type WiseProvider struct {
 	apiToken   string
 	webhookKey string
-	isSandbox  bool
 }
 
-func NewWiseProvider(apiToken, webhookKey string, isSandbox bool) *WiseProvider {
-	return &WiseProvider{apiToken: apiToken, webhookKey: webhookKey, isSandbox: isSandbox}
+func NewWiseProvider(apiToken, webhookKey string) *WiseProvider {
+	return &WiseProvider{apiToken: apiToken, webhookKey: webhookKey}
 }
 
 func (p *WiseProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
@@ -1177,9 +1167,6 @@ func (p *WiseProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*P
 		return nil, fmt.Errorf("wise not configured")
 	}
 	baseURL := "https://api.transferwise.com"
-	if p.isSandbox {
-		baseURL = "https://api.sandbox.transferwise.tech"
-	}
 	order.RedirectURL = fmt.Sprintf("%s/pay/me/%s?amount=%d", baseURL, order.OrderNo, order.Amount)
 	return order, nil
 }
@@ -1212,9 +1199,6 @@ func (p *WiseProvider) QueryOrder(ctx context.Context, orderNo string) (*Payment
 		return nil, fmt.Errorf("wise not configured")
 	}
 	baseURL := "https://api.transferwise.com"
-	if p.isSandbox {
-		baseURL = "https://api.sandbox.transferwise.tech"
-	}
 	req, _ := http.NewRequest("GET", baseURL+"/v1/transfers?reference="+orderNo, nil)
 	req.Header.Set("Authorization", "Bearer "+p.apiToken)
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -1361,8 +1345,10 @@ func parseInt64(s string) int64 {
 func generatePayShortID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 8)
+	randBytes := make([]byte, 8)
+	rand.Read(randBytes)
 	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
+		b[i] = charset[int(randBytes[i])%len(charset)]
 	}
 	return string(b)
 }

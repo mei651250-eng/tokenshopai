@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -286,20 +285,26 @@ func keccak256Hash(data []byte) []byte {
 
 // recoverEthPubKey 从签名恢复 secp256k1 公钥
 func recoverEthPubKey(msgHash []byte, r, s *big.Int, v byte) (*ecdsa.PublicKey, error) {
-	// 将 r, s 构造为 btcec 签名
-	sig := &btcec.Signature{
-		R: r,
-		S: s,
-	}
-
-	// 计算恢复 ID
-	recoveryID := int(v - 27)
-	if recoveryID < 0 || recoveryID > 3 {
+	// 构造紧凑签名格式: [recoveryID + 27] [r 32字节] [s 32字节]
+	recoveryID := v - 27
+	if recoveryID > 3 {
 		return nil, fmt.Errorf("invalid recovery id: %d", recoveryID)
 	}
 
-	// 使用 btcec 恢复公钥
-	pubKey, _, err := sig.Recover(msgHash, btcec.RecoveryMode(recoveryID))
+	// 将 r, s 编码为 32 字节大端
+	rBytes := make([]byte, 32)
+	sBytes := make([]byte, 32)
+	r.FillBytes(rBytes)
+	s.FillBytes(sBytes)
+
+	// btcec.RecoverCompact 期望格式: [recovery flag byte] [r 32字节] [s 32字节]
+	// recovery flag = 27 + recoveryID (0 or 1 for uncompressed)
+	compactSig := make([]byte, 65)
+	compactSig[0] = 27 + recoveryID
+	copy(compactSig[1:33], rBytes)
+	copy(compactSig[33:65], sBytes)
+
+	pubKey, _, err := btcec.RecoverCompact(compactSig, msgHash)
 	if err != nil {
 		return nil, fmt.Errorf("recover pubkey: %w", err)
 	}
