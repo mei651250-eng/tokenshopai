@@ -29,7 +29,11 @@ export default {
   billing: {
     balance: 'Saldo', topup: 'Isi Ulang', history: 'Riwayat Transaksi', export: 'Ekspor Laporan',
     insufficient: 'Saldo Tidak Mencukupi', amount: 'Jumlah', tokens: 'Token', model: 'Model',
-    time: 'Waktu', type: 'Tipe', payAsYouGo: 'Bayar per Pemakaian', package: 'Paket',
+    time: 'Waktu', type: 'Tipe',     payAsYouGo: 'Bayar per Pemakaian', package: 'Paket',
+    transactionTitle: 'Transaksi', allTypes: 'Semua Tipe', allStatus: 'Semua Status',
+    charge: 'Isi', consume: 'Konsumsi', refund: 'Pengembalian', withdraw: 'Penarikan',
+    currency: 'Mata Uang', modelName: 'Model', orderNo: 'No. Pesanan', transactionDetail: 'Detail Transaksi',
+    totalCharge: 'Total Isi', totalConsume: 'Total Konsumsi', totalRefund: 'Total Pengembalian',
   },
   tenant: {
     list: 'Daftar Penyewa', create: 'Buat Penyewa', name: 'Nama Penyewa', plan: 'Paket', region: 'Wilayah',
@@ -207,15 +211,7 @@ export default {
     rateLimitConfig: 'Konfig Batas', rpmLimit: 'Batas RPM', rpmUnit: 'req/min', tpmLimit: 'Batas TPM',
     tpmUnit: 'tokens/min', concurrencyLimit: 'Batas Konkurensi', timeout: 'Waktu Habis',
     timeoutUnit: 'detik', rateLimitSaved: 'Batas disimpan', testConsole: 'Konsol Uji',
-    testPlaceholder: 'Pesan uji...', sendTest: 'Kirim', testError: 'Uji gagal',
-  },
-  billing: {
-    transactionTitle: 'Transaksi', allTypes: 'Semua Tipe', allStatus: 'Semua Status',
-    charge: 'Isi', consume: 'Konsumsi', refund: 'Pengembalian', withdraw: 'Penarikan',
-    success: 'Berhasil', pending: 'Tertunda', failed: 'Gagal',
-    type: 'Tipe', amount: 'Jumlah', currency: 'Mata Uang', modelName: 'Model', tokens: 'Token',
-    status: 'Status', orderNo: 'No. Pesanan', transactionDetail: 'Detail Transaksi',
-    totalCharge: 'Total Isi', totalConsume: 'Total Konsumsi', totalRefund: 'Total Pengembalian',
+    testPlaceholder: 'Pesan uji...',     sendTest: 'Kirim', testError: 'Uji gagal',
   },
   tenants: {
     detail: 'Detail Penyewa', active: 'Aktif', suspended: 'Ditangguhkan', inactive: 'Tidak Aktif',

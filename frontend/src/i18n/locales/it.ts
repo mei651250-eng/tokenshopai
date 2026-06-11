@@ -29,7 +29,11 @@ export default {
   billing: {
     balance: 'Saldo', topup: 'Ricarica', history: 'Cronologia Transazioni', export: 'Esporta',
     insufficient: 'Saldo Insufficiente', amount: 'Importo', tokens: 'Token', model: 'Modello',
-    time: 'Data', type: 'Tipo', payAsYouGo: 'Pay As You Go', package: 'Pacchetto',
+    time: 'Data', type: 'Tipo',     payAsYouGo: 'Pay As You Go', package: 'Pacchetto',
+    transactionTitle: 'Transazioni', allTypes: 'Tutti Tipi', allStatus: 'Tutti Status',
+    charge: 'Ricarica', consume: 'Consumo', refund: 'Rimborso', withdraw: 'Prelievo',
+    currency: 'Valuta', modelName: 'Modello', orderNo: 'N° Ordine', transactionDetail: 'Dettaglio Transazione',
+    totalCharge: 'Totale Ricariche', totalConsume: 'Totale Consumi', totalRefund: 'Totale Rimborsi',
   },
   tenant: {
     list: 'Elenco Tenant', create: 'Crea Tenant', name: 'Nome Tenant', plan: 'Piano',
@@ -211,14 +215,6 @@ export default {
     tpmUnit: 'tokens/min', concurrencyLimit: 'Limite Concorrenza', timeout: 'Timeout', timeoutUnit: 'sec',
     rateLimitSaved: 'Limite salvato', testConsole: 'Console', testPlaceholder: 'Messaggio test...',
     sendTest: 'Invia', testError: 'Test fallito',
-  },
-  billing: {
-    transactionTitle: 'Transazioni', allTypes: 'Tutti Tipi', allStatus: 'Tutti Status',
-    charge: 'Ricarica', consume: 'Consumo', refund: 'Rimborso', withdraw: 'Prelievo',
-    success: 'Successo', pending: 'In attesa', failed: 'Fallito',
-    type: 'Tipo', amount: 'Importo', currency: 'Valuta', modelName: 'Modello', tokens: 'Token',
-    status: 'Stato', orderNo: 'N° Ordine', transactionDetail: 'Dettaglio Transazione',
-    totalCharge: 'Totale Ricariche', totalConsume: 'Totale Consumi', totalRefund: 'Totale Rimborsi',
   },
   tenants: {
     detail: 'Dettaglio Tenant', active: 'Attivo', suspended: 'Sospeso', inactive: 'Inattivo',

@@ -29,7 +29,11 @@ export default {
   billing: {
     balance: 'Saldo', topup: 'Recarregar', history: 'Histórico de Transações', export: 'Exportar Extrato',
     insufficient: 'Saldo Insuficiente', amount: 'Valor', tokens: 'Tokens', model: 'Modelo',
-    time: 'Hora', type: 'Tipo', payAsYouGo: 'Pague Conforme Usar', package: 'Pacote',
+    time: 'Hora', type: 'Tipo',     payAsYouGo: 'Pague Conforme Usar', package: 'Pacote',
+    transactionTitle: 'Transações', allTypes: 'Todos Tipos', allStatus: 'Todos Status',
+    charge: 'Carga', consume: 'Consumo', refund: 'Reembolso', withdraw: 'Saque',
+    currency: 'Moeda', modelName: 'Modelo', orderNo: 'N° Pedido', transactionDetail: 'Detalhe',
+    totalCharge: 'Total Cargas', totalConsume: 'Total Consumos', totalRefund: 'Total Reembolsos',
   },
   tenant: {
     list: 'Lista de Inquilinos', create: 'Criar Inquilino', name: 'Nome do Inquilino', plan: 'Plano',
@@ -218,12 +222,6 @@ export default {
     sendTest: 'Enviar', testError: 'Falha no teste',
   },
   billing: {
-    transactionTitle: 'Transações', allTypes: 'Todos Tipos', allStatus: 'Todos Status',
-    charge: 'Carga', consume: 'Consumo', refund: 'Reembolso', withdraw: 'Saque',
-    success: 'Sucesso', pending: 'Pendente', failed: 'Falhou',
-    type: 'Tipo', amount: 'Valor', currency: 'Moeda', modelName: 'Modelo', tokens: 'Tokens',
-    status: 'Status', orderNo: 'N° Pedido', transactionDetail: 'Detalhe',
-    totalCharge: 'Total Cargas', totalConsume: 'Total Consumos', totalRefund: 'Total Reembolsos',
   },
   tenants: {
     detail: 'Detalhes do Inquilino', active: 'Ativo', suspended: 'Suspenso', inactive: 'Inativo',

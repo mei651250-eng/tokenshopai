@@ -29,7 +29,11 @@ export default {
   billing: {
     balance: 'Guthaben', topup: 'Aufladen', history: 'Transaktionsverlauf', export: 'Auszug exportieren',
     insufficient: 'Nicht genügend Guthaben', amount: 'Betrag', tokens: 'Tokens', model: 'Modell',
-    time: 'Zeit', type: 'Typ', payAsYouGo: 'Pay-as-you-go', package: 'Paket',
+    time: 'Zeit', type: 'Typ',     payAsYouGo: 'Pay-as-you-go', package: 'Paket',
+    transactionTitle: 'Transaktionen', allTypes: 'Alle Typen', allStatus: 'Alle Status',
+    charge: 'Aufladung', consume: 'Verbrauch', refund: 'Rückerstattung', withdraw: 'Auszahlung',
+    currency: 'Währung', modelName: 'Modellname', orderNo: 'Auftrags-Nr.', transactionDetail: 'Transaktionsdetails',
+    totalCharge: 'Gesamt Aufladungen', totalConsume: 'Gesamt Verbrauch', totalRefund: 'Gesamt Rückerstattungen',
   },
   tenant: {
     list: 'Mieterliste', create: 'Mieter erstellen', name: 'Mietername', plan: 'Tarif',
@@ -215,15 +219,7 @@ export default {
     rateLimitConfig: 'Ratenbegrenzung', rpmLimit: 'RPM-Limit', rpmUnit: 'req/min', tpmLimit: 'TPM-Limit',
     tpmUnit: 'tokens/min', concurrencyLimit: 'Parallelitätslimit', timeout: 'Timeout', timeoutUnit: 'Sek.',
     rateLimitSaved: 'Ratenbegrenzung gespeichert', testConsole: 'Testkonsole',
-    testPlaceholder: 'Testnachricht eingeben...', sendTest: 'Test senden', testError: 'Test fehlgeschlagen',
-  },
-  billing: {
-    transactionTitle: 'Transaktionen', allTypes: 'Alle Typen', allStatus: 'Alle Status',
-    charge: 'Aufladung', consume: 'Verbrauch', refund: 'Rückerstattung', withdraw: 'Auszahlung',
-    success: 'Erfolg', pending: 'Ausstehend', failed: 'Fehlgeschlagen',
-    type: 'Typ', amount: 'Betrag', currency: 'Währung', modelName: 'Modellname', tokens: 'Tokens',
-    status: 'Status', orderNo: 'Auftrags-Nr.', transactionDetail: 'Transaktionsdetails',
-    totalCharge: 'Gesamt Aufladungen', totalConsume: 'Gesamt Verbrauch', totalRefund: 'Gesamt Rückerstattungen',
+    testPlaceholder: 'Testnachricht eingeben...',     sendTest: 'Test senden', testError: 'Test fehlgeschlagen',
   },
   tenants: {
     detail: 'Mieterdetails', active: 'Aktiv', suspended: 'Gesperrt', inactive: 'Inaktiv',

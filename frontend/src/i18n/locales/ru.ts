@@ -29,7 +29,11 @@ export default {
   billing: {
     balance: 'Баланс', topup: 'Пополнить', history: 'История транзакций', export: 'Экспорт выписки',
     insufficient: 'Недостаточно средств', amount: 'Сумма', tokens: 'Токены', model: 'Модель',
-    time: 'Время', type: 'Тип', payAsYouGo: 'Оплата по факту', package: 'Пакет',
+    time: 'Время', type: 'Тип',     payAsYouGo: 'Оплата по факту', package: 'Пакет',
+    transactionTitle: 'Транзакции', allTypes: 'Все типы', allStatus: 'Все статусы',
+    charge: 'Пополнение', consume: 'Расход', refund: 'Возврат', withdraw: 'Вывод',
+    currency: 'Валюта', modelName: 'Модель', orderNo: 'Номер заказа', transactionDetail: 'Детали транзакции',
+    totalCharge: 'Всего пополнений', totalConsume: 'Всего расходов', totalRefund: 'Всего возвратов',
   },
   tenant: {
     list: 'Список арендаторов', create: 'Создать', name: 'Название', plan: 'Тариф', region: 'Регион',
@@ -219,12 +223,6 @@ export default {
     testPlaceholder: 'Тестовое сообщение...', sendTest: 'Отправить', testError: 'Тест не удался',
   },
   billing: {
-    transactionTitle: 'Транзакции', allTypes: 'Все типы', allStatus: 'Все статусы',
-    charge: 'Пополнение', consume: 'Расход', refund: 'Возврат', withdraw: 'Вывод',
-    success: 'Успешно', pending: 'Ожидание', failed: 'Ошибка',
-    type: 'Тип', amount: 'Сумма', currency: 'Валюта', modelName: 'Модель', tokens: 'Токены',
-    status: 'Статус', orderNo: 'Номер заказа', transactionDetail: 'Детали транзакции',
-    totalCharge: 'Всего пополнений', totalConsume: 'Всего расходов', totalRefund: 'Всего возвратов',
   },
   tenants: {
     detail: 'Детали арендатора', active: 'Активен', suspended: 'Приостановлен', inactive: 'Неактивен',

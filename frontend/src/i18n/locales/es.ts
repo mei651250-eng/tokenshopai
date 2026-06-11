@@ -29,7 +29,11 @@ export default {
   billing: {
     balance: 'Saldo', topup: 'Recargar', history: 'Historial de Transacciones', export: 'Exportar Estado',
     insufficient: 'Saldo Insuficiente', amount: 'Monto', tokens: 'Tokens', model: 'Modelo',
-    time: 'Hora', type: 'Tipo', payAsYouGo: 'Pago por Uso', package: 'Paquete',
+    time: 'Hora', type: 'Tipo',     payAsYouGo: 'Pago por Uso', package: 'Paquete',
+    transactionTitle: 'Transacciones', allTypes: 'Todos los Tipos', allStatus: 'Todos los Estados',
+    charge: 'Carga', consume: 'Consumo', refund: 'Reembolso', withdraw: 'Retiro',
+    currency: 'Moneda', modelName: 'Modelo', orderNo: 'N° Orden', transactionDetail: 'Detalle Transacción',
+    totalCharge: 'Total Cargas', totalConsume: 'Total Consumos', totalRefund: 'Total Reembolsos',
   },
   tenant: {
     list: 'Lista de Inquilinos', create: 'Crear Inquilino', name: 'Nombre del Inquilino', plan: 'Plan',
@@ -213,14 +217,6 @@ export default {
     tpmUnit: 'tokens/min', concurrencyLimit: 'Límite Concurrencia', timeout: 'Tiempo', timeoutUnit: 'seg',
     rateLimitSaved: 'Límite guardado', testConsole: 'Consola', testPlaceholder: 'Mensaje de prueba...',
     sendTest: 'Enviar', testError: 'Prueba fallida',
-  },
-  billing: {
-    transactionTitle: 'Transacciones', allTypes: 'Todos los Tipos', allStatus: 'Todos los Estados',
-    charge: 'Carga', consume: 'Consumo', refund: 'Reembolso', withdraw: 'Retiro',
-    success: 'Éxito', pending: 'Pendiente', failed: 'Fallido',
-    type: 'Tipo', amount: 'Monto', currency: 'Moneda', modelName: 'Modelo', tokens: 'Tokens',
-    status: 'Estado', orderNo: 'N° Orden', transactionDetail: 'Detalle Transacción',
-    totalCharge: 'Total Cargas', totalConsume: 'Total Consumos', totalRefund: 'Total Reembolsos',
   },
   tenants: {
     detail: 'Detalle del Inquilino', active: 'Activo', suspended: 'Suspendido', inactive: 'Inactivo',

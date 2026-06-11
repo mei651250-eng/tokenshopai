@@ -28,7 +28,11 @@ export default {
   billing: {
     balance: 'Saldo', topup: 'Opwaarderen', history: 'Transactiegeschiedenis', export: 'Afschrift exporteren',
     insufficient: 'Onvoldoende saldo', amount: 'Bedrag', tokens: 'Tokens', model: 'Model',
-    time: 'Tijd', type: 'Type', payAsYouGo: 'Betaal per gebruik', package: 'Pakket',
+    time: 'Tijd', type: 'Type',     payAsYouGo: 'Betaal per gebruik', package: 'Pakket',
+    transactionTitle: 'Transacties', allTypes: 'Alle types', allStatus: 'Alle statussen',
+    charge: 'Opladen', consume: 'Verbruik', refund: 'Terugbetaling', withdraw: 'Opname',
+    currency: 'Valuta', modelName: 'Model', orderNo: 'Ordernr.', transactionDetail: 'Transactiedetails',
+    totalCharge: 'Totaal opladingen', totalConsume: 'Totaal verbruik', totalRefund: 'Totaal terugbetalingen',
   },
   tenant: {
     list: 'Huurderoverzicht', create: 'Huurder aanmaken', name: 'Huurdernaam', plan: 'Abonnement',
@@ -212,14 +216,6 @@ export default {
     tpmUnit: 'tokens/min', concurrencyLimit: 'Gelijktijdigheid', timeout: 'Timeout', timeoutUnit: 'sec',
     rateLimitSaved: 'Limiet opgeslagen', testConsole: 'Console', testPlaceholder: 'Test bericht...',
     sendTest: 'Verstuur', testError: 'Test mislukt',
-  },
-  billing: {
-    transactionTitle: 'Transacties', allTypes: 'Alle types', allStatus: 'Alle statussen',
-    charge: 'Opladen', consume: 'Verbruik', refund: 'Terugbetaling', withdraw: 'Opname',
-    success: 'Succes', pending: 'In behandeling', failed: 'Mislukt',
-    type: 'Type', amount: 'Bedrag', currency: 'Valuta', modelName: 'Model', tokens: 'Tokens',
-    status: 'Status', orderNo: 'Ordernr.', transactionDetail: 'Transactiedetails',
-    totalCharge: 'Totaal opladingen', totalConsume: 'Totaal verbruik', totalRefund: 'Totaal terugbetalingen',
   },
   tenants: {
     detail: 'Huurderdetails', active: 'Actief', suspended: 'Geschorst', inactive: 'Inactief',

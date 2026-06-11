@@ -58,7 +58,7 @@
         <!-- Language Switcher -->
         <el-dropdown trigger="click" @command="handleLocaleChange">
           <button class="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-            <el-icon :size="18"><Globe /></el-icon>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           </button>
           <template #dropdown>
             <el-dropdown-menu>
@@ -166,7 +166,7 @@ import { adminApi, userApi } from '@/api'
 import {
   DataBoard, Key, ShoppingCart, Reading, CreditCard,
   Wallet, Money, Bell, User, SwitchButton,
-  Sunny, Moon, Share, Setting, TrendCharts, Globe,
+  Sunny, Moon, Share, Setting, TrendCharts,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()

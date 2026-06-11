@@ -29,7 +29,11 @@ export default {
   billing: {
     balance: 'Solde', topup: 'Recharger', history: 'Historique des Transactions',
     export: 'Exporter le Relevé', insufficient: 'Solde Insuffisant', amount: 'Montant', tokens: 'Tokens',
-    model: 'Modèle', time: 'Heure', type: 'Type', payAsYouGo: "Paiement à l'Utilisation", package: 'Forfait',
+    model: 'Modèle', time: 'Heure', type: 'Type',     payAsYouGo: "Paiement à l'Utilisation", package: 'Forfait',
+    transactionTitle: 'Transactions', allTypes: 'Tous Types', allStatus: 'Tous Statuts',
+    charge: 'Recharge', consume: 'Consommation', refund: 'Remboursement', withdraw: 'Retrait',
+    currency: 'Devise', modelName: 'Modèle', orderNo: 'N° Commande', transactionDetail: 'Détail Transaction',
+    totalCharge: 'Total Recharges', totalConsume: 'Total Consommations', totalRefund: 'Total Remboursements',
   },
   tenant: {
     list: 'Liste des Locataires', create: 'Créer un Locataire', name: 'Nom du Locataire', plan: 'Forfait',
@@ -224,15 +228,7 @@ export default {
     rpmUnit: 'req/min', tpmLimit: 'Limite TPM', tpmUnit: 'tokens/min',
     concurrencyLimit: 'Limite Concurrence', timeout: 'Délai', timeoutUnit: 'secondes',
     rateLimitSaved: 'Limite enregistrée', testConsole: 'Console Test',
-    testPlaceholder: 'Message test...', sendTest: 'Envoyer Test', testError: 'Échec requête test',
-  },
-  billing: {
-    transactionTitle: 'Transactions', allTypes: 'Tous Types', allStatus: 'Tous Statuts',
-    charge: 'Recharge', consume: 'Consommation', refund: 'Remboursement', withdraw: 'Retrait',
-    success: 'Succès', pending: 'En attente', failed: 'Échoué',
-    type: 'Type', amount: 'Montant', currency: 'Devise', modelName: 'Modèle', tokens: 'Tokens',
-    status: 'Statut', orderNo: 'N° Commande', transactionDetail: 'Détail Transaction',
-    totalCharge: 'Total Recharges', totalConsume: 'Total Consommations', totalRefund: 'Total Remboursements',
+    testPlaceholder: 'Message test...',     sendTest: 'Envoyer Test', testError: 'Échec requête test',
   },
   tenants: {
     detail: 'Détail Locataire', active: 'Actif', suspended: 'Suspendu', inactive: 'Inactif',

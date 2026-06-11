@@ -26,7 +26,11 @@ export default {
   billing: {
     balance: '帳戶餘額', topup: '充值', history: '交易記錄', export: '匯出對帳單',
     insufficient: '餘額不足', amount: '金額', tokens: 'Token數', model: '模型', time: '時間',
-    type: '類型', payAsYouGo: '按量付費', package: '套餐',
+    type: '類型',     payAsYouGo: '按量付費', package: '套餐',
+    transactionTitle: '交易記錄', allTypes: '全部類型', allStatus: '全部狀態',
+    charge: '充值', consume: '消費', refund: '退款', withdraw: '提現',
+    currency: '幣種', modelName: '模型名稱', orderNo: '訂單號', transactionDetail: '交易詳情',
+    totalCharge: '總充值', totalConsume: '總消費', totalRefund: '總退款',
   },
   tenant: {
     list: '租戶列表', create: '創建租戶', name: '租戶名稱', plan: '方案', region: '區域',
@@ -192,11 +196,6 @@ export default {
     sendTest: '發送測試', testError: '測試請求失敗，請檢查模型配置',
   },
   billing: {
-    transactionTitle: '交易記錄', allTypes: '全部類型', allStatus: '全部狀態', charge: '充值', consume: '消費',
-    refund: '退款', withdraw: '提現', success: '成功', pending: '處理中', failed: '失敗', type: '類型',
-    amount: '金額', currency: '幣種', modelName: '模型名稱', tokens: 'Token數', status: '狀態',
-    orderNo: '訂單號', transactionDetail: '交易詳情', totalCharge: '總充值', totalConsume: '總消費',
-    totalRefund: '總退款',
   },
   tenants: {
     detail: '租戶詳情', active: '活躍', suspended: '已暫停', inactive: '未激活', userCount: '用戶數',

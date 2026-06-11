@@ -26,7 +26,11 @@ export default {
   billing: {
     balance: 'ยอดคงเหลือ', topup: 'เติมเงิน', history: 'ประวัติธุรกรรม', export: 'ส่งออกใบแจ้งยอด',
     insufficient: 'ยอดเงินไม่เพียงพอ', amount: 'จำนวนเงิน', tokens: 'Token', model: 'โมเดล',
-    time: 'เวลา', type: 'ประเภท', payAsYouGo: 'จ่ายตามการใช้งาน', package: 'แพ็กเกจ',
+    time: 'เวลา', type: 'ประเภท',     payAsYouGo: 'จ่ายตามการใช้งาน', package: 'แพ็กเกจ',
+    transactionTitle: 'ธุรกรรม', allTypes: 'ทุกประเภท', allStatus: 'ทุกสถานะ',
+    charge: 'เติมเงิน', consume: 'การใช้งาน', refund: 'คืนเงิน', withdraw: 'ถอน',
+    currency: 'สกุลเงิน', modelName: 'โมเดล', orderNo: 'เลขที่คำสั่ง', transactionDetail: 'รายละเอียดธุรกรรม',
+    totalCharge: 'รวมการเติมเงิน', totalConsume: 'รวมการใช้งาน', totalRefund: 'รวมการคืนเงิน',
   },
   tenant: {
     list: 'รายชื่อผู้เช่า', create: 'สร้างผู้เช่า', name: 'ชื่อผู้เช่า', plan: 'แผน', region: 'ภูมิภาค',
@@ -205,12 +209,6 @@ export default {
     testError: 'การทดสอบล้มเหลว',
   },
   billing: {
-    transactionTitle: 'ธุรกรรม', allTypes: 'ทุกประเภท', allStatus: 'ทุกสถานะ',
-    charge: 'เติมเงิน', consume: 'การใช้งาน', refund: 'คืนเงิน', withdraw: 'ถอน',
-    success: 'สำเร็จ', pending: 'รอดำเนินการ', failed: 'ล้มเหลว',
-    type: 'ประเภท', amount: 'จำนวนเงิน', currency: 'สกุลเงิน', modelName: 'โมเดล', tokens: 'Token',
-    status: 'สถานะ', orderNo: 'เลขที่คำสั่ง', transactionDetail: 'รายละเอียดธุรกรรม',
-    totalCharge: 'รวมการเติมเงิน', totalConsume: 'รวมการใช้งาน', totalRefund: 'รวมการคืนเงิน',
   },
   tenants: {
     detail: 'รายละเอียดผู้เช่า', active: 'ใช้งาน', suspended: 'ระงับ', inactive: 'ไม่ใช้งาน',

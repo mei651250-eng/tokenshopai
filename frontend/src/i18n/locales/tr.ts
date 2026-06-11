@@ -28,7 +28,11 @@ export default {
   billing: {
     balance: 'Bakiye', topup: 'Bakiye Yükle', history: 'İşlem Geçmişi', export: 'Dekont Dışa Aktar',
     insufficient: 'Yetersiz Bakiye', amount: 'Tutar', tokens: 'Token', model: 'Model', time: 'Zaman',
-    type: 'Tür', payAsYouGo: 'Kullandıkça Öde', package: 'Paket',
+    type: 'Tür',     payAsYouGo: 'Kullandıkça Öde', package: 'Paket',
+    transactionTitle: 'İşlemler', allTypes: 'Tüm Türler', allStatus: 'Tüm Durumlar',
+    charge: 'Yükleme', consume: 'Tüketim', refund: 'İade', withdraw: 'Para Çekme',
+    currency: 'Para Birimi', modelName: 'Model Adı', orderNo: 'Sipariş No', transactionDetail: 'İşlem Detayı',
+    totalCharge: 'Toplam Yükleme', totalConsume: 'Toplam Tüketim', totalRefund: 'Toplam İade',
   },
   tenant: {
     list: 'Kiracı Listesi', create: 'Kiracı Oluştur', name: 'Kiracı Adı', plan: 'Plan', region: 'Bölge',
@@ -206,12 +210,6 @@ export default {
     testError: 'Test başarısız',
   },
   billing: {
-    transactionTitle: 'İşlemler', allTypes: 'Tüm Türler', allStatus: 'Tüm Durumlar',
-    charge: 'Yükleme', consume: 'Tüketim', refund: 'İade', withdraw: 'Para Çekme',
-    success: 'Başarılı', pending: 'Beklemede', failed: 'Başarısız',
-    type: 'Tür', amount: 'Tutar', currency: 'Para Birimi', modelName: 'Model Adı', tokens: 'Token',
-    status: 'Durum', orderNo: 'Sipariş No', transactionDetail: 'İşlem Detayı',
-    totalCharge: 'Toplam Yükleme', totalConsume: 'Toplam Tüketim', totalRefund: 'Toplam İade',
   },
   tenants: {
     detail: 'Kiracı Detayı', active: 'Aktif', suspended: 'Askıda', inactive: 'Pasif',

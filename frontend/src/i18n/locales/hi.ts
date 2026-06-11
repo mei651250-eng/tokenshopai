@@ -27,7 +27,11 @@ export default {
   billing: {
     balance: 'शेष राशि', topup: 'टॉप अप', history: 'लेन-देन इतिहास', export: 'विवरण निर्यात करें',
     insufficient: 'अपर्याप्त शेष', amount: 'राशि', tokens: 'टोकन', model: 'मॉडल', time: 'समय',
-    type: 'प्रकार', payAsYouGo: 'भुगतान जैसे-जैसे उपयोग करें', package: 'पैकेज',
+    type: 'प्रकार',     payAsYouGo: 'भुगतान जैसे-जैसे उपयोग करें', package: 'पैकेज',
+    transactionTitle: 'लेन-देन', allTypes: 'सभी प्रकार', allStatus: 'सभी स्थितियाँ',
+    charge: 'शुल्क', consume: 'उपभोग', refund: 'वापसी', withdraw: 'निकासी',
+    currency: 'मुद्रा', modelName: 'मॉडल नाम', orderNo: 'आदेश संख्या', transactionDetail: 'लेन-देन विवरण',
+    totalCharge: 'कुल शुल्क', totalConsume: 'कुल उपभोग', totalRefund: 'कुल वापसी',
   },
   tenant: {
     list: 'किराएदार सूची', create: 'किराएदार बनाएं', name: 'किराएदार नाम', plan: 'योजना',
@@ -201,14 +205,6 @@ export default {
     concurrencyLimit: 'समवर्ती सीमा', timeout: 'टाइमआउट', timeoutUnit: 'सेकंड',
     rateLimitSaved: 'दर सीमा सहेजी गई', testConsole: 'परीक्षण कंसोल', testPlaceholder: 'परीक्षण संदेश...',
     sendTest: 'परीक्षण भेजें', testError: 'परीक्षण विफल',
-  },
-  billing: {
-    transactionTitle: 'लेन-देन', allTypes: 'सभी प्रकार', allStatus: 'सभी स्थितियाँ',
-    charge: 'शुल्क', consume: 'उपभोग', refund: 'वापसी', withdraw: 'निकासी',
-    success: 'सफल', pending: 'लंबित', failed: 'विफल',
-    type: 'प्रकार', amount: 'राशि', currency: 'मुद्रा', modelName: 'मॉडल नाम', tokens: 'टोकन',
-    status: 'स्थिति', orderNo: 'आदेश संख्या', transactionDetail: 'लेन-देन विवरण',
-    totalCharge: 'कुल शुल्क', totalConsume: 'कुल उपभोग', totalRefund: 'कुल वापसी',
   },
   tenants: {
     detail: 'किराएदार विवरण', active: 'सक्रिय', suspended: 'निलंबित', inactive: 'निष्क्रिय',

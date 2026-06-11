@@ -28,7 +28,11 @@ export default {
   billing: {
     balance: 'Số dư', topup: 'Nạp tiền', history: 'Lịch sử giao dịch', export: 'Xuất sao kê',
     insufficient: 'Số dư không đủ', amount: 'Số tiền', tokens: 'Token', model: 'Mô hình',
-    time: 'Thời gian', type: 'Loại', payAsYouGo: 'Trả theo mức sử dụng', package: 'Gói',
+    time: 'Thời gian', type: 'Loại',     payAsYouGo: 'Trả theo mức sử dụng', package: 'Gói',
+    transactionTitle: 'Giao dịch', allTypes: 'Tất cả loại', allStatus: 'Tất cả trạng thái',
+    charge: 'Nạp', consume: 'Tiêu thụ', refund: 'Hoàn tiền', withdraw: 'Rút',
+    currency: 'Tiền tệ', modelName: 'Mô hình', orderNo: 'Mã đơn', transactionDetail: 'Chi tiết giao dịch',
+    totalCharge: 'Tổng nạp', totalConsume: 'Tổng tiêu thụ', totalRefund: 'Tổng hoàn tiền',
   },
   tenant: {
     list: 'Danh sách khách thuê', create: 'Tạo khách thuê', name: 'Tên khách thuê', plan: 'Gói',
@@ -209,12 +213,6 @@ export default {
     testError: 'Kiểm tra thất bại',
   },
   billing: {
-    transactionTitle: 'Giao dịch', allTypes: 'Tất cả loại', allStatus: 'Tất cả trạng thái',
-    charge: 'Nạp', consume: 'Tiêu thụ', refund: 'Hoàn tiền', withdraw: 'Rút',
-    success: 'Thành công', pending: 'Chờ', failed: 'Thất bại',
-    type: 'Loại', amount: 'Số tiền', currency: 'Tiền tệ', modelName: 'Mô hình', tokens: 'Token',
-    status: 'Trạng thái', orderNo: 'Mã đơn', transactionDetail: 'Chi tiết giao dịch',
-    totalCharge: 'Tổng nạp', totalConsume: 'Tổng tiêu thụ', totalRefund: 'Tổng hoàn tiền',
   },
   tenants: {
     detail: 'Chi tiết khách thuê', active: 'Hoạt động', suspended: 'Tạm ngưng', inactive: 'Không hoạt động',

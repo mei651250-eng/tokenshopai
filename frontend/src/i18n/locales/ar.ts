@@ -28,7 +28,11 @@ export default {
   billing: {
     balance: 'الرصيد', topup: 'شحن', history: 'سجل المعاملات', export: 'تصدير كشف الحساب',
     insufficient: 'رصيد غير كاف', amount: 'المبلغ', tokens: 'التوكنات', model: 'النموذج',
-    time: 'الوقت', type: 'النوع', payAsYouGo: 'الدفع حسب الاستخدام', package: 'الباقة',
+    time: 'الوقت', type: 'النوع',     payAsYouGo: 'الدفع حسب الاستخدام', package: 'الباقة',
+    transactionTitle: 'المعاملات', allTypes: 'جميع الأنواع', allStatus: 'جميع الحالات',
+    charge: 'شحن', consume: 'استهلاك', refund: 'استرداد', withdraw: 'سحب',
+    currency: 'العملة', modelName: 'النموذج', orderNo: 'رقم الأمر', transactionDetail: 'تفاصيل المعاملة',
+    totalCharge: 'إجمالي الشحن', totalConsume: 'إجمالي الاستهلاك', totalRefund: 'إجمالي الاسترداد',
   },
   tenant: {
     list: 'قائمة المستأجرين', create: 'إنشاء مستأجر', name: 'اسم المستأجر', plan: 'الخطة',
@@ -206,14 +210,6 @@ export default {
     concurrencyLimit: 'حد التزامن', timeout: 'مهلة', timeoutUnit: 'ثانية',
     rateLimitSaved: 'تم حفظ الحد', testConsole: 'وحدة الاختبار', testPlaceholder: 'رسالة اختبار...',
     sendTest: 'إرسال', testError: 'فشل الاختبار',
-  },
-  billing: {
-    transactionTitle: 'المعاملات', allTypes: 'جميع الأنواع', allStatus: 'جميع الحالات',
-    charge: 'شحن', consume: 'استهلاك', refund: 'استرداد', withdraw: 'سحب',
-    success: 'نجاح', pending: 'قيد الانتظار', failed: 'فشل',
-    type: 'النوع', amount: 'المبلغ', currency: 'العملة', modelName: 'النموذج', tokens: 'التوكنات',
-    status: 'الحالة', orderNo: 'رقم الأمر', transactionDetail: 'تفاصيل المعاملة',
-    totalCharge: 'إجمالي الشحن', totalConsume: 'إجمالي الاستهلاك', totalRefund: 'إجمالي الاسترداد',
   },
   tenants: {
     detail: 'تفاصيل المستأجر', active: 'نشط', suspended: 'موقوف', inactive: 'غير نشط',

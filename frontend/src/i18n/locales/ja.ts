@@ -84,6 +84,10 @@ export default {
     type: 'タイプ',
     payAsYouGo: '従量課金',
     package: 'パッケージ',
+    transactionTitle: '取引履歴', allTypes: '全タイプ', allStatus: '全ステータス',
+    charge: 'チャージ', consume: '消費', refund: '返金', withdraw: '出金',
+    currency: '通貨', modelName: 'モデル名', orderNo: '注文番号', transactionDetail: '取引詳細',
+    totalCharge: '総チャージ', totalConsume: '総消費', totalRefund: '総返金',
   },
   tenant: {
     list: 'テナント一覧',
@@ -483,15 +487,7 @@ export default {
     rpmUnit: 'req/min', tpmLimit: 'TPM制限', tpmUnit: 'tokens/min',
     concurrencyLimit: '同時接続制限', timeout: 'タイムアウト', timeoutUnit: '秒',
     rateLimitSaved: 'レート制限保存済み', testConsole: 'テストコンソール',
-    testPlaceholder: 'テストメッセージを入力...', sendTest: 'テスト送信', testError: 'テストリクエスト失敗',
-  },
-  billing: {
-    transactionTitle: '取引履歴', allTypes: '全タイプ', allStatus: '全ステータス',
-    charge: 'チャージ', consume: '消費', refund: '返金', withdraw: '出金',
-    success: '成功', pending: '処理中', failed: '失敗',
-    type: 'タイプ', amount: '金額', currency: '通貨', modelName: 'モデル名',
-    tokens: 'Token数', status: 'ステータス', orderNo: '注文番号', transactionDetail: '取引詳細',
-    totalCharge: '総チャージ', totalConsume: '総消費', totalRefund: '総返金',
+    testPlaceholder: 'テストメッセージを入力...',     sendTest: 'テスト送信', testError: 'テストリクエスト失敗',
   },
   tenants: {
     detail: 'テナント詳細', active: 'アクティブ', suspended: '停止', inactive: '非アクティブ',

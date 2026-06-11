@@ -84,6 +84,10 @@ export default {
     type: '유형',
     payAsYouGo: '종량제',
     package: '패키지',
+    transactionTitle: '거래 내역', allTypes: '전체 유형', allStatus: '전체 상태',
+    charge: '충전', consume: '소비', refund: '환불', withdraw: '출금',
+    currency: '통화', modelName: '모델 이름', orderNo: '주문 번호', transactionDetail: '거래 상세',
+    totalCharge: '총 충전', totalConsume: '총 소비', totalRefund: '총 환불',
   },
   tenant: {
     list: '테넌트 목록',
@@ -327,15 +331,7 @@ export default {
     rpmUnit: 'req/min', tpmLimit: 'TPM 제한', tpmUnit: 'tokens/min',
     concurrencyLimit: '동시 연결 제한', timeout: '시간 초과', timeoutUnit: '초',
     rateLimitSaved: '속도 제한 저장됨', testConsole: '테스트 콘솔',
-    testPlaceholder: '테스트 메시지 입력...', sendTest: '테스트 전송', testError: '테스트 요청 실패',
-  },
-  billing: {
-    transactionTitle: '거래 내역', allTypes: '전체 유형', allStatus: '전체 상태',
-    charge: '충전', consume: '소비', refund: '환불', withdraw: '출금',
-    success: '성공', pending: '처리 중', failed: '실패',
-    type: '유형', amount: '금액', currency: '통화', modelName: '모델 이름',
-    tokens: 'Token 수', status: '상태', orderNo: '주문 번호', transactionDetail: '거래 상세',
-    totalCharge: '총 충전', totalConsume: '총 소비', totalRefund: '총 환불',
+    testPlaceholder: '테스트 메시지 입력...',     sendTest: '테스트 전송', testError: '테스트 요청 실패',
   },
   tenants: {
     detail: '테넌트 상세', active: '활성', suspended: '정지', inactive: '비활성',
