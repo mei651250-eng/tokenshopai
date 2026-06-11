@@ -189,7 +189,7 @@ func main() {
 
 	// 验证码服务（短信+邮箱，使用配置文件中的密钥）
 	smsSender := auth.NewAliyunSMSSender(cfg.Verification.SMS.Aliyun.AccessKeyID, cfg.Verification.SMS.Aliyun.AccessKeySecret, cfg.Verification.SMS.Aliyun.SignName, cfg.Verification.SMS.Aliyun.TemplateCode)
-	emailSender := auth.NewSMTPEmailSender(cfg.Verification.Email.SMTP.Host, cfg.Verification.Email.SMTP.Port, cfg.Verification.Email.SMTP.Username, cfg.Verification.Email.SMTP.Password, cfg.Verification.Email.SMTP.FromAddress, cfg.Verification.Email.SMTP.FromName)
+	emailSender := auth.NewSMTPEmailSender(cfg.Verification.Email.SMTP.Host, cfg.Verification.Email.SMTP.Port, cfg.Verification.Email.SMTP.Username, cfg.Verification.Email.SMTP.Password, cfg.Verification.Email.SMTP.FromAddr, cfg.Verification.Email.SMTP.FromName)
 	verificationService := auth.NewVerificationService(logger, rdb, smsSender, emailSender)
 
 	// 人脸识别服务（WebAuthn）
@@ -1515,10 +1515,10 @@ func main() {
 			tokenStr := hex.EncodeToString(resetToken)
 			// 存入Redis，1小时过期
 			resetKey := fmt.Sprintf("password:reset:%s", tokenStr)
-			s.rdb.Set(c.Request.Context(), resetKey, user.ID, 1*time.Hour)
+			rdb.Set(c.Request.Context(), resetKey, user.ID, 1*time.Hour)
 			// 发送重置邮件
 			resetURL := fmt.Sprintf("https://tokenshopai.com/reset-password?token=%s", tokenStr)
-			emailBody := fmt.Sprintf(`<h2>密码重置</h2><p>您好 %s，</p><p>请点击以下链接重置您的密码：</p><p><a href="%s">%s</a></p><p>此链接1小时内有效。</p><p>如非本人操作，请忽略此邮件。</p>`, user.DisplayName, resetURL, resetURL)
+			emailBody := fmt.Sprintf(`<h2>密码重置</h2><p>您好 %s，</p><p>请点击以下链接重置您的密码：</p><p><a href="%s">%s</a></p><p>此链接1小时内有效。</p><p>如非本人操作，请忽略此邮件。</p>`, user.Username, resetURL, resetURL)
 			if err := emailSender.Send(c.Request.Context(), user.Email, "TokenHub - 密码重置", emailBody); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send reset email"})
 				return
