@@ -23,6 +23,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tokenhub/backend/internal/auth"
 	"github.com/tokenhub/backend/internal/billing"
+	"github.com/tokenhub/backend/internal/security/audit"
 	"github.com/tokenhub/backend/internal/channel"
 	tokencore "github.com/tokenhub/backend/internal/token"
 	tokencache "github.com/tokenhub/backend/internal/cache"
@@ -111,7 +112,7 @@ func main() {
 	wafService := waf.NewWAF(cfg.Security.EnableWAF)
 	desensitizer := desensitize.NewDesensitizer(cfg.Security.EnableDesensitize)
 	i18nService := i18n.NewI18n(cfg.I18n.DefaultLocale, cfg.I18n.SupportedLocales)
-	_ = i18nService
+	_ = i18nService // 通过中间件或路由handler中使用
 
 	// 钱包服务（Web3钱包绑定 + 加密货币充值）
 	platformAddrs := map[string]map[wallet.ChainType]string{
@@ -178,9 +179,17 @@ func main() {
 	tokenService := tokencore.NewTokenService(logger, db)
 	tokenService.AutoMigrate()
 
-	// 验证码服务（短信+邮箱）
-	smsSender := auth.NewAliyunSMSSender("", "", "TokenHub", "SMS_123456")
-	emailSender := auth.NewSMTPEmailSender("smtp.tokenhub.com", 465, "", "", "noreply@tokenhub.com", "TokenHub")
+	// 租户服务
+	tenantService := tenant.NewTenantService(logger, db)
+	tenantService.AutoMigrate()
+
+	// 审计服务
+	auditService := audit.NewAuditService(logger, db)
+	auditService.AutoMigrate()
+
+	// 验证码服务（短信+邮箱，使用配置文件中的密钥）
+	smsSender := auth.NewAliyunSMSSender(cfg.Verification.SMS.Aliyun.AccessKeyID, cfg.Verification.SMS.Aliyun.AccessKeySecret, cfg.Verification.SMS.Aliyun.SignName, cfg.Verification.SMS.Aliyun.TemplateCode)
+	emailSender := auth.NewSMTPEmailSender(cfg.Verification.Email.SMTP.Host, cfg.Verification.Email.SMTP.Port, cfg.Verification.Email.SMTP.Username, cfg.Verification.Email.SMTP.Password, cfg.Verification.Email.SMTP.FromAddress, cfg.Verification.Email.SMTP.FromName)
 	verificationService := auth.NewVerificationService(logger, rdb, smsSender, emailSender)
 
 	// 人脸识别服务（WebAuthn）
@@ -1493,6 +1502,27 @@ func main() {
 		})
 
 		admin.POST("/users/:id/reset-password", func(c *gin.Context) {
+			userID := c.Param("id")
+			// 查找用户
+			var user auth.User
+			if err := db.First(&user, "id = ?", userID).Error; err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+				return
+			}
+			// 生成临时重置令牌
+			resetToken := make([]byte, 32)
+			rand.Read(resetToken)
+			tokenStr := hex.EncodeToString(resetToken)
+			// 存入Redis，1小时过期
+			resetKey := fmt.Sprintf("password:reset:%s", tokenStr)
+			s.rdb.Set(c.Request.Context(), resetKey, user.ID, 1*time.Hour)
+			// 发送重置邮件
+			resetURL := fmt.Sprintf("https://tokenshopai.com/reset-password?token=%s", tokenStr)
+			emailBody := fmt.Sprintf(`<h2>密码重置</h2><p>您好 %s，</p><p>请点击以下链接重置您的密码：</p><p><a href="%s">%s</a></p><p>此链接1小时内有效。</p><p>如非本人操作，请忽略此邮件。</p>`, user.DisplayName, resetURL, resetURL)
+			if err := emailSender.Send(c.Request.Context(), user.Email, "TokenHub - 密码重置", emailBody); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send reset email"})
+				return
+			}
 			c.JSON(http.StatusOK, gin.H{"message": "password reset email sent"})
 		})
 
@@ -1856,12 +1886,47 @@ func main() {
 		})
 
 		admin.GET("/report/request-trend", func(c *gin.Context) {
-			// 返回请求趋势数据（简化版，实际应从ClickHouse查询）
-			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+			// 从Redis时间序列数据中聚合请求趋势
+			now := time.Now()
+			hours := 24
+			if c.Query("range") == "7d" {
+				hours = 168
+			}
+			var data []map[string]interface{}
+			for i := hours; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * time.Hour)
+				minuteKey := t.Format("200601021504")
+				requests, _ := rdb.Get(c.Request.Context(), fmt.Sprintf("metrics:global:requests:%s", minuteKey)).Int64()
+				tokens, _ := rdb.Get(c.Request.Context(), fmt.Sprintf("metrics:global:tokens:%s", minuteKey)).Int64()
+				data = append(data, map[string]interface{}{
+					"time":     t.Format("2006-01-02 15:04"),
+					"requests": requests,
+					"tokens":   tokens,
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"data": data})
 		})
 
 		admin.GET("/report/token-trend", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+			now := time.Now()
+			hours := 24
+			if c.Query("range") == "7d" {
+				hours = 168
+			}
+			var data []map[string]interface{}
+			for i := hours; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * time.Hour)
+				minuteKey := t.Format("200601021504")
+				inputTokens, _ := rdb.Get(c.Request.Context(), fmt.Sprintf("metrics:global:tokens:%s", minuteKey)).Int64()
+				outputTokens, _ := rdb.Get(c.Request.Context(), fmt.Sprintf("metrics:global:output_tokens:%s", minuteKey)).Int64()
+				data = append(data, map[string]interface{}{
+					"time":          t.Format("2006-01-02 15:04"),
+					"input_tokens":  inputTokens,
+					"output_tokens": outputTokens,
+					"total_tokens":  inputTokens + outputTokens,
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"data": data})
 		})
 
 		admin.GET("/report/model-distribution", func(c *gin.Context) {
@@ -1870,15 +1935,52 @@ func main() {
 		})
 
 		admin.GET("/report/cost-distribution", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+			metrics := monitorService.GetMetrics()
+			var data []map[string]interface{}
+			for _, m := range metrics.Models {
+				data = append(data, map[string]interface{}{
+					"model_id":   m.ModelID,
+					"model_name": m.ModelName,
+					"provider":   m.Provider,
+					"requests":   m.Requests,
+					"tokens":     m.Tokens,
+					"amount":     m.Tokens * 10, // 简化费用估算
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"data": data})
 		})
 
 		admin.GET("/report/latency-distribution", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+			metrics := monitorService.GetMetrics()
+			var data []map[string]interface{}
+			for _, m := range metrics.Models {
+				data = append(data, map[string]interface{}{
+					"model_id":       m.ModelID,
+					"model_name":     m.ModelName,
+					"avg_latency_ms": m.AvgLatencyMs,
+					"success_rate":   m.SuccessRate,
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"data": data})
 		})
 
 		admin.GET("/report/error-analysis", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+			metrics := monitorService.GetMetrics()
+			var data []map[string]interface{}
+			for _, m := range metrics.Models {
+				if m.Errors > 0 {
+					data = append(data, map[string]interface{}{
+						"model_id":    m.ModelID,
+						"model_name":  m.ModelName,
+						"provider":    m.Provider,
+						"total_reqs":  m.Requests,
+						"errors":      m.Errors,
+						"error_rate":  float64(m.Errors) / float64(m.Requests) * 100,
+						"circuit":     m.CircuitState,
+					})
+				}
+			}
+			c.JSON(http.StatusOK, gin.H{"data": data})
 		})
 
 		admin.GET("/report/model-ranking", func(c *gin.Context) {
@@ -1887,7 +1989,8 @@ func main() {
 		})
 
 		admin.GET("/report/tenant-ranking", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+			metrics := monitorService.GetMetrics()
+			c.JSON(http.StatusOK, gin.H{"data": metrics.Tenants})
 		})
 
 		admin.GET("/report/export", func(c *gin.Context) {
@@ -1895,10 +1998,124 @@ func main() {
 			if format == "" {
 				format = "csv"
 			}
-			// 简化版导出
-			c.Header("Content-Type", "text/csv")
+			timeRange := c.DefaultQuery("time_range", "7d")
+			metrics := monitorService.GetMetrics()
+
+			if format == "json" {
+				c.Header("Content-Type", "application/json")
+				c.Header("Content-Disposition", "attachment; filename=report.json")
+				data := map[string]interface{}{
+					"export_time": time.Now().Format("2006-01-02 15:04:05"),
+					"time_range":  timeRange,
+					"summary": map[string]interface{}{
+						"total_requests":  metrics.TotalRequests,
+						"total_tokens":   metrics.TotalTokens,
+						"total_amount":   metrics.TotalAmount,
+						"success_rate":   metrics.SuccessRate,
+						"avg_latency_ms": metrics.P50LatencyMs,
+					},
+					"models":  metrics.Models,
+					"tenants": metrics.Tenants,
+				}
+				jsonData, _ := json.Marshal(data)
+				c.Data(http.StatusOK, "application/json", jsonData)
+				return
+			}
+
+			// CSV格式
+			c.Header("Content-Type", "text/csv; charset=utf-8")
 			c.Header("Content-Disposition", "attachment; filename=report.csv")
-			c.String(http.StatusOK, "report export placeholder\n")
+			var csv strings.Builder
+			csv.WriteString("\xEF\xBB\xBF") // UTF-8 BOM
+			csv.WriteString("导出时间,时间范围\n")
+			csv.WriteString(fmt.Sprintf("%s,%s\n\n", time.Now().Format("2006-01-02 15:04:05"), timeRange))
+			csv.WriteString("总请求数,总Token数,总费用(分),成功率,P50延迟(ms)\n")
+			csv.WriteString(fmt.Sprintf("%d,%d,%d,%.2f,%.1f\n\n", metrics.TotalRequests, metrics.TotalTokens, metrics.TotalAmount, metrics.SuccessRate, metrics.P50LatencyMs))
+			csv.WriteString("模型ID,模型名称,供应商,请求数,Token数,平均延迟(ms)\n")
+			for _, m := range metrics.Models {
+				csv.WriteString(fmt.Sprintf("%s,%s,%s,%d,%d,%.1f\n", m.ModelID, m.ModelName, m.Provider, m.Requests, m.Tokens, m.AvgLatencyMs))
+			}
+			c.String(http.StatusOK, csv.String())
+		})
+
+		// ============ 租户管理 ============
+		admin.GET("/tenants", func(c *gin.Context) {
+			status := c.Query("status")
+			page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+			pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+			tenants, total, err := tenantService.List(c.Request.Context(), tenant.TenantStatus(status), page, pageSize)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": tenants, "total": total})
+		})
+
+		admin.GET("/tenants/:id", func(c *gin.Context) {
+			t, err := tenantService.GetByID(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "tenant not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": t})
+		})
+
+		admin.POST("/tenants", func(c *gin.Context) {
+			var t tenant.Tenant
+			if err := c.ShouldBindJSON(&t); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := tenantService.Create(c.Request.Context(), &t); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusCreated, gin.H{"data": t})
+		})
+
+		admin.PUT("/tenants/:id", func(c *gin.Context) {
+			var updates map[string]interface{}
+			if err := c.ShouldBindJSON(&updates); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := tenantService.Update(c.Request.Context(), c.Param("id"), updates); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "tenant updated"})
+		})
+
+		admin.DELETE("/tenants/:id", func(c *gin.Context) {
+			if err := tenantService.Delete(c.Request.Context(), c.Param("id")); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "tenant suspended"})
+		})
+
+		admin.GET("/tenants/:id/quotas", func(c *gin.Context) {
+			t, err := tenantService.GetByID(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "tenant not found"})
+				return
+			}
+			_ = t
+			c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+		})
+
+		admin.PUT("/tenants/:id/quotas", func(c *gin.Context) {
+			var q tenant.TenantQuota
+			if err := c.ShouldBindJSON(&q); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			q.TenantID = c.Param("id")
+			if err := tenantService.SetQuota(c.Request.Context(), &q); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "quota updated"})
 		})
 
 		// ============ API Key 管理 ============
@@ -2806,7 +3023,7 @@ func main() {
 				c.JSON(http.StatusNotFound, gin.H{"error": "兑换码无效或已使用"})
 				return
 			}
-			if code.ExpiresAt > 0 && code.ExpiresAt < time.Now().Unix() {
+			if code.ExpiresAt != nil && code.ExpiresAt.Before(time.Now()) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "兑换码已过期"})
 				return
 			}

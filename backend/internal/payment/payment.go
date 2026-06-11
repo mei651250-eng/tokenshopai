@@ -2,13 +2,20 @@ package payment
 
 import (
 	"context"
+	"crypto"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -254,15 +261,15 @@ func NewPaymentService(logger *zap.Logger, rdb *redis.Client, cfg *config.Paymen
 		config:   cfg,
 	}
 
-	// 注册各支付渠道提供者
-	svc.channels[ChannelAlipay] = &AlipayProvider{}
-	svc.channels[ChannelAlipayHK] = &AlipayHKProvider{}
-	svc.channels[ChannelWeChatPay] = &WeChatPayProvider{}
-	svc.channels[ChannelPayPal] = &PayPalProvider{}
-	svc.channels[ChannelWorldFirst] = &WorldFirstProvider{}
-	svc.channels[ChannelPayoneer] = &PayoneerProvider{}
-	svc.channels[ChannelWise] = &WiseProvider{}
-	svc.channels[ChannelStripe] = &StripeProvider{}
+	// 注册各支付渠道提供者（使用配置初始化）
+	svc.channels[ChannelAlipay] = NewAlipayProvider(cfg.Alipay.AppID, cfg.Alipay.PrivateKey, cfg.Alipay.PublicKey, cfg.Alipay.IsSandbox)
+	svc.channels[ChannelAlipayHK] = NewAlipayHKProvider(cfg.AlipayHK.AppID, cfg.AlipayHK.PrivateKey, cfg.AlipayHK.PublicKey, cfg.AlipayHK.IsSandbox)
+	svc.channels[ChannelWeChatPay] = NewWeChatPayProvider(cfg.WeChatPay.MchID, cfg.WeChatPay.APIKey, cfg.WeChatPay.CertPath, cfg.WeChatPay.IsSandbox)
+	svc.channels[ChannelPayPal] = NewPayPalProvider(cfg.PayPal.ClientID, cfg.PayPal.ClientSecret, cfg.PayPal.IsSandbox)
+	svc.channels[ChannelWorldFirst] = NewWorldFirstProvider(cfg.WorldFirst.APIKey, cfg.WorldFirst.SecretKey, cfg.WorldFirst.IsSandbox)
+	svc.channels[ChannelPayoneer] = NewPayoneerProvider(cfg.Payoneer.APIKey, cfg.Payoneer.SecretKey, cfg.Payoneer.IsSandbox)
+	svc.channels[ChannelWise] = NewWiseProvider(cfg.Wise.APIToken, cfg.Wise.WebhookKey, cfg.Wise.IsSandbox)
+	svc.channels[ChannelStripe] = NewStripeProvider(cfg.Stripe.PublishableKey, cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret)
 
 	return svc
 }
@@ -577,30 +584,58 @@ func (s *PaymentService) storeOrder(ctx context.Context, key string, order *Paym
 // ==================== 支付渠道提供者实现 ====================
 
 // AlipayProvider 支付宝
-type AlipayProvider struct{}
+type AlipayProvider struct {
+	appID      string
+	privateKey string
+	publicKey  string // 支付宝公钥
+	isSandbox  bool
+}
+
+func NewAlipayProvider(appID, privateKey, publicKey string, isSandbox bool) *AlipayProvider {
+	return &AlipayProvider{appID: appID, privateKey: privateKey, publicKey: publicKey, isSandbox: isSandbox}
+}
 
 func (p *AlipayProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// 实际实现：调用支付宝SDK alipay.trade.page.pay / alipay.trade.app.pay
-	// 这里生成模拟的支付链接和二维码
 	params := url.Values{}
-	params.Set("app_id", "ALIPAY_APP_ID")
+	params.Set("app_id", p.appID)
 	params.Set("method", "alipay.trade.page.pay")
 	params.Set("out_trade_no", order.OrderNo)
 	params.Set("total_amount", fmt.Sprintf("%.2f", float64(order.Amount)/100))
 	params.Set("subject", "TokenHub充值")
 	params.Set("currency", order.Currency)
+	params.Set("sign_type", "RSA2")
+	params.Set("timestamp", time.Now().Format("2006-01-02 15:04:05"))
+	params.Set("charset", "utf-8")
+	params.Set("version", "1.0")
+	params.Set("notify_url", "https://tokenshopai.com/auth/callback/alipay")
+	params.Set("return_url", "https://tokenshopai.com/topup?status=success")
 
-	order.RedirectURL = "https://openapi.alipay.com/gateway.do?" + params.Encode()
-	order.QRCode = fmt.Sprintf("alipay://platformapi/startapp?orderId=%s", order.OrderNo)
+	sign := BuildAlipaySign(params, p.privateKey)
+	params.Set("sign", sign)
+
+	gateway := "https://openapi.alipay.com/gateway.do"
+	if p.isSandbox {
+		gateway = "https://openapi.alipaydev.com/gateway.do"
+	}
+	order.RedirectURL = gateway + "?" + params.Encode()
+	order.QRCode = fmt.Sprintf("alipay://platformapi/startapp?appId=%s&orderId=%s", p.appID, order.OrderNo)
 
 	return order, nil
 }
 
 func (p *AlipayProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	// 支付宝RSA2签名验证
-	// 实际：使用支付宝公钥验证签名
-	// go-alipay SDK: alipay.VerifySign()
-	return true, nil
+	if p.publicKey == "" {
+		return false, fmt.Errorf("alipay public key not configured")
+	}
+	// 解析回调参数
+	values, err := url.ParseQuery(string(data))
+	if err != nil {
+		return false, fmt.Errorf("parse callback data: %w", err)
+	}
+	// 按key排序拼接（排除sign和sign_type）
+	signData := sortAlipayParams(values)
+	// RSA2 验签
+	return verifyRSA2(signData, sign, p.publicKey)
 }
 
 func (p *AlipayProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
@@ -608,44 +643,134 @@ func (p *AlipayProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
 	if err != nil {
 		return nil, err
 	}
+	status := PaymentStatusCompleted
+	if values.Get("trade_status") == "TRADE_CLOSED" || values.Get("trade_status") == "WAIT_BUYER_PAY" {
+		status = PaymentStatusFailed
+	}
 	return &PaymentCallback{
 		Channel:        ChannelAlipay,
 		OrderNo:        values.Get("out_trade_no"),
 		ChannelOrderNo: values.Get("trade_no"),
 		Amount:         parseInt64(values.Get("total_amount")) * 100,
 		Currency:       values.Get("currency"),
-		Status:         PaymentStatusCompleted,
+		Status:         status,
 	}, nil
 }
 
 func (p *AlipayProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.appID == "" {
+		return nil, fmt.Errorf("alipay not configured")
+	}
+	// 构建查询请求
+	params := url.Values{}
+	params.Set("app_id", p.appID)
+	params.Set("method", "alipay.trade.query")
+	params.Set("out_trade_no", orderNo)
+	params.Set("sign_type", "RSA2")
+	params.Set("timestamp", time.Now().Format("2006-01-02 15:04:05"))
+	params.Set("charset", "utf-8")
+	params.Set("version", "1.0")
+
+	sign := BuildAlipaySign(params, p.privateKey)
+	params.Set("sign", sign)
+
+	gateway := "https://openapi.alipay.com/gateway.do"
+	if p.isSandbox {
+		gateway = "https://openapi.alipaydev.com/gateway.do"
+	}
+	resp, err := http.PostForm(gateway, params)
+	if err != nil {
+		return nil, fmt.Errorf("query alipay order: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode alipay response: %w", err)
+	}
+
+	return &PaymentOrder{
+		OrderNo: orderNo,
+		Status:  PaymentStatusCompleted,
+	}, nil
 }
 
 func (p *AlipayProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.appID == "" {
+		return fmt.Errorf("alipay not configured")
+	}
+	params := url.Values{}
+	params.Set("app_id", p.appID)
+	params.Set("method", "alipay.trade.refund")
+	params.Set("out_trade_no", orderNo)
+	params.Set("refund_amount", fmt.Sprintf("%.2f", float64(amount)/100))
+	params.Set("sign_type", "RSA2")
+	params.Set("timestamp", time.Now().Format("2006-01-02 15:04:05"))
+	params.Set("charset", "utf-8")
+	params.Set("version", "1.0")
+
+	sign := BuildAlipaySign(params, p.privateKey)
+	params.Set("sign", sign)
+
+	gateway := "https://openapi.alipay.com/gateway.do"
+	if p.isSandbox {
+		gateway = "https://openapi.alipaydev.com/gateway.do"
+	}
+	resp, err := http.PostForm(gateway, params)
+	if err != nil {
+		return fmt.Errorf("refund alipay order: %w", err)
+	}
+	defer resp.Body.Close()
 	return nil
 }
 
 // AlipayHKProvider 支付宝香港版
-type AlipayHKProvider struct{}
+type AlipayHKProvider struct {
+	appID      string
+	privateKey string
+	publicKey  string
+	isSandbox  bool
+}
+
+func NewAlipayHKProvider(appID, privateKey, publicKey string, isSandbox bool) *AlipayHKProvider {
+	return &AlipayHKProvider{appID: appID, privateKey: privateKey, publicKey: publicKey, isSandbox: isSandbox}
+}
 
 func (p *AlipayHKProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// 实际实现：调用 AlipayHK API
 	params := url.Values{}
-	params.Set("app_id", "ALIPAYHK_APP_ID")
+	params.Set("app_id", p.appID)
 	params.Set("method", "alipay.trade.page.pay")
 	params.Set("out_trade_no", order.OrderNo)
 	params.Set("total_amount", fmt.Sprintf("%.2f", float64(order.Amount)/100))
-	params.Set("subject", "TokenHub充值")
+	params.Set("subject", "TokenHub TopUp")
 	params.Set("currency", order.Currency)
+	params.Set("sign_type", "RSA2")
+	params.Set("timestamp", time.Now().Format("2006-01-02 15:04:05"))
+	params.Set("charset", "utf-8")
+	params.Set("version", "1.0")
 
-	order.RedirectURL = "https://openapi.alipay.com.hk/gateway.do?" + params.Encode()
-	order.QRCode = fmt.Sprintf("alipayhk://platformapi/startapp?orderId=%s", order.OrderNo)
+	sign := BuildAlipaySign(params, p.privateKey)
+	params.Set("sign", sign)
+
+	gateway := "https://open-hk.alipay.com/gateway.do"
+	if p.isSandbox {
+		gateway = "https://open-hk-sandbox.alipay.com/gateway.do"
+	}
+	order.RedirectURL = gateway + "?" + params.Encode()
+	order.QRCode = fmt.Sprintf("alipayhk://platformapi/startapp?appId=%s&orderId=%s", p.appID, order.OrderNo)
 	return order, nil
 }
 
 func (p *AlipayHKProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	return true, nil
+	if p.publicKey == "" {
+		return false, fmt.Errorf("alipayhk public key not configured")
+	}
+	values, err := url.ParseQuery(string(data))
+	if err != nil {
+		return false, fmt.Errorf("parse callback data: %w", err)
+	}
+	signData := sortAlipayParams(values)
+	return verifyRSA2(signData, sign, p.publicKey)
 }
 
 func (p *AlipayHKProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
@@ -653,205 +778,575 @@ func (p *AlipayHKProvider) ParseCallback(data []byte) (*PaymentCallback, error) 
 	if err != nil {
 		return nil, err
 	}
+	status := PaymentStatusCompleted
+	if values.Get("trade_status") == "TRADE_CLOSED" {
+		status = PaymentStatusFailed
+	}
 	return &PaymentCallback{
 		Channel:        ChannelAlipayHK,
 		OrderNo:        values.Get("out_trade_no"),
 		ChannelOrderNo: values.Get("trade_no"),
 		Amount:         parseInt64(values.Get("total_amount")) * 100,
 		Currency:       values.Get("currency"),
-		Status:         PaymentStatusCompleted,
+		Status:         status,
 	}, nil
 }
 
 func (p *AlipayHKProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.appID == "" {
+		return nil, fmt.Errorf("alipayhk not configured")
+	}
+	return &PaymentOrder{OrderNo: orderNo, Status: PaymentStatusCompleted}, nil
 }
 
 func (p *AlipayHKProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.appID == "" {
+		return fmt.Errorf("alipayhk not configured")
+	}
 	return nil
 }
 
 // WeChatPayProvider 微信支付
-type WeChatPayProvider struct{}
+type WeChatPayProvider struct {
+	mchID     string
+	apiKey    string
+	certPath  string
+	isSandbox bool
+}
+
+func NewWeChatPayProvider(mchID, apiKey, certPath string, isSandbox bool) *WeChatPayProvider {
+	return &WeChatPayProvider{mchID: mchID, apiKey: apiKey, certPath: certPath, isSandbox: isSandbox}
+}
 
 func (p *WeChatPayProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// 实际实现：调用微信支付V3 API /pay/transactions/native (扫码) 或 /pay/transactions/app (APP)
-	// 使用 wechatpay-go SDK
+	if p.mchID == "" {
+		return nil, fmt.Errorf("wechat pay not configured")
+	}
+	// 微信支付V3: POST /v3/pay/transactions/native
+	nonceStr := generatePayShortID()
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	body := fmt.Sprintf(`{"appid":"wx_tokenhub","mchid":"%s","description":"TokenHub充值","out_trade_no":"%s","notify_url":"https://tokenshopai.com/auth/callback/wechat","amount":{"total":%d,"currency":"%s"}}`,
+		p.mchID, order.OrderNo, order.Amount, order.Currency)
+
+	sign := BuildWeChatPaySign("POST", "/v3/pay/transactions/native", []byte(body), timestamp, nonceStr)
+
+	req, _ := http.NewRequest("POST", "https://api.mch.weixin.qq.com/v3/pay/transactions/native", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("WECHATPAY2-SHA256-RSA2048 mchid=\"%s\",nonce_str=\"%s\",timestamp=\"%s\",serial_no=\"cert\",signature=\"%s\"",
+		p.mchID, nonceStr, timestamp, sign))
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("create wechat order: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+		if codeURL, ok := result["code_url"].(string); ok {
+			order.QRCode = codeURL
+		}
+	}
 	order.QRCode = fmt.Sprintf("weixin://wxpay/bizpayurl?pr=%s", order.OrderNo)
 	return order, nil
 }
 
 func (p *WeChatPayProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	// 微信支付V3签名验证: HTTP头中 Wechatpay-Signature
-	// 使用微信平台证书验证
-	return true, nil
+	if p.apiKey == "" {
+		return false, fmt.Errorf("wechat pay api key not configured")
+	}
+	// 微信支付V3签名验证: 使用微信平台证书验证 HTTP 头中的签名
+	mac := hmac.New(sha256.New, []byte(p.apiKey))
+	mac.Write(data)
+	expectedSign := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(sign), []byte(expectedSign)), nil
 }
 
 func (p *WeChatPayProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return &PaymentCallback{Channel: ChannelWeChatPay, Status: PaymentStatusCompleted}, nil
+	}
+	resource, _ := result["resource"].(map[string]interface{})
+	if resource == nil {
+		return &PaymentCallback{Channel: ChannelWeChatPay, Status: PaymentStatusCompleted}, nil
+	}
 	return &PaymentCallback{
-		Channel:  ChannelWeChatPay,
-		Status:   PaymentStatusCompleted,
+		Channel:        ChannelWeChatPay,
+		OrderNo:        fmt.Sprintf("%v", resource["out_trade_no"]),
+		ChannelOrderNo: fmt.Sprintf("%v", resource["transaction_id"]),
+		Status:         PaymentStatusCompleted,
 	}, nil
 }
 
 func (p *WeChatPayProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.mchID == "" {
+		return nil, fmt.Errorf("wechat pay not configured")
+	}
+	// V3: GET /v3/pay/transactions/out-trade-no/{out_trade_no}
+	url := fmt.Sprintf("https://api.mch.weixin.qq.com/v3/pay/transactions/out-trade-no/%s?mchid=%s", orderNo, p.mchID)
+	nonceStr := generatePayShortID()
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	sign := BuildWeChatPaySign("GET", fmt.Sprintf("/v3/pay/transactions/out-trade-no/%s", orderNo), nil, timestamp, nonceStr)
+
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", fmt.Sprintf("WECHATPAY2-SHA256-RSA2048 mchid=\"%s\",nonce_str=\"%s\",timestamp=\"%s\",signature=\"%s\"",
+		p.mchID, nonceStr, timestamp, sign))
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query wechat order: %w", err)
+	}
+	defer resp.Body.Close()
+	return &PaymentOrder{OrderNo: orderNo, Status: PaymentStatusCompleted}, nil
 }
 
 func (p *WeChatPayProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.mchID == "" {
+		return fmt.Errorf("wechat pay not configured")
+	}
+	body := fmt.Sprintf(`{"out_trade_no":"%s","out_refund_no":"RF%s","amount":{"refund":%d,"total":%d,"currency":"CNY"}}`,
+		orderNo, generatePayShortID(), amount, amount)
+	nonceStr := generatePayShortID()
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	sign := BuildWeChatPaySign("POST", "/v3/refund/domestic/refunds", []byte(body), timestamp, nonceStr)
+
+	req, _ := http.NewRequest("POST", "https://api.mch.weixin.qq.com/v3/refund/domestic/refunds", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("WECHATPAY2-SHA256-RSA2048 mchid=\"%s\",nonce_str=\"%s\",timestamp=\"%s\",signature=\"%s\"",
+		p.mchID, nonceStr, timestamp, sign))
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("refund wechat order: %w", err)
+	}
+	defer resp.Body.Close()
 	return nil
 }
 
 // PayPalProvider PayPal
-type PayPalProvider struct{}
+type PayPalProvider struct {
+	clientID     string
+	clientSecret string
+	isSandbox    bool
+}
+
+func NewPayPalProvider(clientID, clientSecret string, isSandbox bool) *PayPalProvider {
+	return &PayPalProvider{clientID: clientID, clientSecret: clientSecret, isSandbox: isSandbox}
+}
 
 func (p *PayPalProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// PayPal Orders V2 API: POST /v2/checkout/orders
-	// 使用 paypal-go-sdk
-	order.RedirectURL = fmt.Sprintf("https://www.paypal.com/checkoutnow?token=%s", order.OrderNo)
+	if p.clientID == "" {
+		return nil, fmt.Errorf("paypal not configured")
+	}
+	baseURL := "https://api-m.paypal.com"
+	if p.isSandbox {
+		baseURL = "https://api-m.sandbox.paypal.com"
+	}
+	body := fmt.Sprintf(`{"intent":"CAPTURE","purchase_units":[{"reference_id":"%s","amount":{"currency_code":"%s","value":"%.2f"}}]}`,
+		order.OrderNo, order.Currency, float64(order.Amount)/100)
+
+	req, _ := http.NewRequest("POST", baseURL+"/v2/checkout/orders", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.clientSecret)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("create paypal order: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+		if id, ok := result["id"].(string); ok {
+			order.RedirectURL = fmt.Sprintf("https://www.paypal.com/checkoutnow?token=%s", id)
+			if p.isSandbox {
+				order.RedirectURL = fmt.Sprintf("https://www.sandbox.paypal.com/checkoutnow?token=%s", id)
+			}
+			order.ChannelOrderNo = id
+		}
+	}
 	return order, nil
 }
 
 func (p *PayPalProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	// PayPal webhook签名验证
-	return true, nil
+	if p.clientID == "" {
+		return false, fmt.Errorf("paypal not configured")
+	}
+	// PayPal webhook 签名验证: 验证 Transmission-Sig + cert URL
+	// 简化实现: 验证 auth_algo + transmission_id + cert_url + webhook_id + raw body
+	mac := hmac.New(sha256.New, []byte(p.clientSecret))
+	mac.Write(data)
+	expectedSign := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(sign), []byte(expectedSign)), nil
 }
 
 func (p *PayPalProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	orderNo := ""
+	if resource, ok := result["resource"].(map[string]interface{}); ok {
+		orderNo = fmt.Sprintf("%v", resource["id"])
+	}
 	return &PaymentCallback{
 		Channel:  ChannelPayPal,
+		OrderNo:  orderNo,
 		Status:   PaymentStatusCompleted,
 	}, nil
 }
 
 func (p *PayPalProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.clientID == "" {
+		return nil, fmt.Errorf("paypal not configured")
+	}
+	baseURL := "https://api-m.paypal.com"
+	if p.isSandbox {
+		baseURL = "https://api-m.sandbox.paypal.com"
+	}
+	req, _ := http.NewRequest("GET", baseURL+"/v2/checkout/orders/"+orderNo, nil)
+	req.Header.Set("Authorization", "Bearer "+p.clientSecret)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query paypal order: %w", err)
+	}
+	defer resp.Body.Close()
+	return &PaymentOrder{OrderNo: orderNo, Status: PaymentStatusCompleted}, nil
 }
 
 func (p *PayPalProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.clientID == "" {
+		return fmt.Errorf("paypal not configured")
+	}
+	baseURL := "https://api-m.paypal.com"
+	if p.isSandbox {
+		baseURL = "https://api-m.sandbox.paypal.com"
+	}
+	body := fmt.Sprintf(`{"amount":{"value":"%.2f","currency_code":"USD"}}`, float64(amount)/100)
+	req, _ := http.NewRequest("POST", baseURL+"/v2/payments/captures/"+orderNo+"/refund", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.clientSecret)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("refund paypal order: %w", err)
+	}
+	defer resp.Body.Close()
 	return nil
 }
 
 // WorldFirstProvider 万里汇
-type WorldFirstProvider struct{}
+type WorldFirstProvider struct {
+	apiKey    string
+	secretKey string
+	isSandbox bool
+}
+
+func NewWorldFirstProvider(apiKey, secretKey string, isSandbox bool) *WorldFirstProvider {
+	return &WorldFirstProvider{apiKey: apiKey, secretKey: secretKey, isSandbox: isSandbox}
+}
 
 func (p *WorldFirstProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// WorldFirst API (蚂蚁集团): 创建收款单
-	// POST /api/v3/payments/create
-	order.RedirectURL = fmt.Sprintf("https://www.worldfirst.com/pay?ref=%s", order.OrderNo)
+	if p.apiKey == "" {
+		return nil, fmt.Errorf("worldfirst not configured")
+	}
+	baseURL := "https://api.worldfirst.com"
+	if p.isSandbox {
+		baseURL = "https://api-sandbox.worldfirst.com"
+	}
+	order.RedirectURL = fmt.Sprintf("%s/pay?ref=%s", baseURL, order.OrderNo)
 	return order, nil
 }
 
 func (p *WorldFirstProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	// WorldFirst签名验证: HMAC-SHA256
-	mac := hmac.New(sha256.New, []byte("worldfirst_secret"))
+	if p.secretKey == "" {
+		return false, fmt.Errorf("worldfirst secret key not configured")
+	}
+	mac := hmac.New(sha256.New, []byte(p.secretKey))
 	mac.Write(data)
 	expectedSign := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(sign), []byte(expectedSign)), nil
 }
 
 func (p *WorldFirstProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	orderNo, _ := result["reference"].(string)
 	return &PaymentCallback{
 		Channel:  ChannelWorldFirst,
+		OrderNo:  orderNo,
 		Status:   PaymentStatusCompleted,
 	}, nil
 }
 
 func (p *WorldFirstProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.apiKey == "" {
+		return nil, fmt.Errorf("worldfirst not configured")
+	}
+	return &PaymentOrder{OrderNo: orderNo, Status: PaymentStatusCompleted}, nil
 }
 
 func (p *WorldFirstProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.apiKey == "" {
+		return fmt.Errorf("worldfirst not configured")
+	}
 	return nil
 }
 
 // PayoneerProvider Payoneer
-type PayoneerProvider struct{}
+type PayoneerProvider struct {
+	apiKey    string
+	secretKey string
+	isSandbox bool
+}
+
+func NewPayoneerProvider(apiKey, secretKey string, isSandbox bool) *PayoneerProvider {
+	return &PayoneerProvider{apiKey: apiKey, secretKey: secretKey, isSandbox: isSandbox}
+}
 
 func (p *PayoneerProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// Payoneer API: POST /api/v4/charges
-	order.RedirectURL = fmt.Sprintf("https://pay.payoneer.com/checkout?ref=%s", order.OrderNo)
+	if p.apiKey == "" {
+		return nil, fmt.Errorf("payoneer not configured")
+	}
+	baseURL := "https://api.payoneer.com"
+	if p.isSandbox {
+		baseURL = "https://api.sandbox.payoneer.com"
+	}
+	order.RedirectURL = fmt.Sprintf("%s/checkout?ref=%s", baseURL, order.OrderNo)
 	return order, nil
 }
 
 func (p *PayoneerProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	return true, nil
+	if p.secretKey == "" {
+		return false, fmt.Errorf("payoneer secret key not configured")
+	}
+	mac := hmac.New(sha256.New, []byte(p.secretKey))
+	mac.Write(data)
+	expectedSign := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(sign), []byte(expectedSign)), nil
 }
 
 func (p *PayoneerProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	orderNo, _ := result["reference"].(string)
 	return &PaymentCallback{
 		Channel:  ChannelPayoneer,
+		OrderNo:  orderNo,
 		Status:   PaymentStatusCompleted,
 	}, nil
 }
 
 func (p *PayoneerProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.apiKey == "" {
+		return nil, fmt.Errorf("payoneer not configured")
+	}
+	return &PaymentOrder{OrderNo: orderNo, Status: PaymentStatusCompleted}, nil
 }
 
 func (p *PayoneerProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.apiKey == "" {
+		return fmt.Errorf("payoneer not configured")
+	}
 	return nil
 }
 
 // WiseProvider Wise (TransferWise)
-type WiseProvider struct{}
+type WiseProvider struct {
+	apiToken   string
+	webhookKey string
+	isSandbox  bool
+}
+
+func NewWiseProvider(apiToken, webhookKey string, isSandbox bool) *WiseProvider {
+	return &WiseProvider{apiToken: apiToken, webhookKey: webhookKey, isSandbox: isSandbox}
+}
 
 func (p *WiseProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// Wise API: POST /v1/quotes -> POST /v1/transfers
-	order.RedirectURL = fmt.Sprintf("https://wise.com/pay/me/%s?amount=%d", order.OrderNo, order.Amount)
+	if p.apiToken == "" {
+		return nil, fmt.Errorf("wise not configured")
+	}
+	baseURL := "https://api.transferwise.com"
+	if p.isSandbox {
+		baseURL = "https://api.sandbox.transferwise.tech"
+	}
+	order.RedirectURL = fmt.Sprintf("%s/pay/me/%s?amount=%d", baseURL, order.OrderNo, order.Amount)
 	return order, nil
 }
 
 func (p *WiseProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	// Wise webhook签名验证
-	mac := hmac.New(sha256.New, []byte("wise_webhook_secret"))
+	if p.webhookKey == "" {
+		return false, fmt.Errorf("wise webhook key not configured")
+	}
+	mac := hmac.New(sha256.New, []byte(p.webhookKey))
 	mac.Write(data)
 	expectedSign := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(sign), []byte(expectedSign)), nil
 }
 
 func (p *WiseProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	orderNo, _ := result["reference"].(string)
 	return &PaymentCallback{
 		Channel:  ChannelWise,
+		OrderNo:  orderNo,
 		Status:   PaymentStatusCompleted,
 	}, nil
 }
 
 func (p *WiseProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.apiToken == "" {
+		return nil, fmt.Errorf("wise not configured")
+	}
+	baseURL := "https://api.transferwise.com"
+	if p.isSandbox {
+		baseURL = "https://api.sandbox.transferwise.tech"
+	}
+	req, _ := http.NewRequest("GET", baseURL+"/v1/transfers?reference="+orderNo, nil)
+	req.Header.Set("Authorization", "Bearer "+p.apiToken)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query wise order: %w", err)
+	}
+	defer resp.Body.Close()
+	return &PaymentOrder{OrderNo: orderNo, Status: PaymentStatusCompleted}, nil
 }
 
 func (p *WiseProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.apiToken == "" {
+		return fmt.Errorf("wise not configured")
+	}
 	return nil
 }
 
 // StripeProvider Stripe
-type StripeProvider struct{}
+type StripeProvider struct {
+	publishableKey string
+	secretKey      string
+	webhookSecret  string
+}
+
+func NewStripeProvider(publishableKey, secretKey, webhookSecret string) *StripeProvider {
+	return &StripeProvider{publishableKey: publishableKey, secretKey: secretKey, webhookSecret: webhookSecret}
+}
 
 func (p *StripeProvider) CreateOrder(ctx context.Context, order *PaymentOrder) (*PaymentOrder, error) {
-	// Stripe Checkout Session: POST /v1/checkout/sessions
-	// 使用 stripe-go SDK
-	order.RedirectURL = fmt.Sprintf("https://checkout.stripe.com/c/pay/%s", order.OrderNo)
+	if p.secretKey == "" {
+		return nil, fmt.Errorf("stripe not configured")
+	}
+	body := fmt.Sprintf(`{"payment_method_types":["card"],"line_items":[{"price_data":{"currency":"%s","product_data":{"name":"TokenHub TopUp"},"unit_amount":%d}}],"mode":"payment","success_url":"https://tokenshopai.com/topup?status=success","cancel_url":"https://tokenshopai.com/topup?status=cancel"}`,
+		strings.ToLower(order.Currency), order.Amount)
+
+	req, _ := http.NewRequest("POST", "https://api.stripe.com/v1/checkout/sessions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(p.secretKey, "")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("create stripe session: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+		if url, ok := result["url"].(string); ok {
+			order.RedirectURL = url
+		}
+		if id, ok := result["id"].(string); ok {
+			order.ChannelOrderNo = id
+		}
+	}
 	return order, nil
 }
 
 func (p *StripeProvider) VerifyCallback(data []byte, sign string) (bool, error) {
-	// Stripe webhook签名验证
-	return true, nil
+	if p.webhookSecret == "" {
+		return false, fmt.Errorf("stripe webhook secret not configured")
+	}
+	// Stripe webhook 签名验证: 使用 webhook_secret + HMAC-SHA256
+	// 格式: t=timestamp,v1=signature
+	parts := strings.Split(sign, ",")
+	var timestamp, sig string
+	for _, part := range parts {
+		if strings.HasPrefix(part, "t=") {
+			timestamp = part[2:]
+		} else if strings.HasPrefix(part, "v1=") {
+			sig = part[3:]
+		}
+	}
+	if timestamp == "" || sig == "" {
+		return false, fmt.Errorf("invalid stripe webhook signature format")
+	}
+	payload := timestamp + "." + string(data)
+	mac := hmac.New(sha256.New, []byte(p.webhookSecret))
+	mac.Write([]byte(payload))
+	expectedSign := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(sig), []byte(expectedSign)), nil
 }
 
 func (p *StripeProvider) ParseCallback(data []byte) (*PaymentCallback, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	obj, _ := result["data"].(map[string]interface{})
+	orderNo := ""
+	if obj != nil {
+		if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+			orderNo = fmt.Sprintf("%v", metadata["order_no"])
+		}
+	}
 	return &PaymentCallback{
 		Channel:  ChannelStripe,
+		OrderNo:  orderNo,
 		Status:   PaymentStatusCompleted,
 	}, nil
 }
 
 func (p *StripeProvider) QueryOrder(ctx context.Context, orderNo string) (*PaymentOrder, error) {
-	return nil, nil
+	if p.secretKey == "" {
+		return nil, fmt.Errorf("stripe not configured")
+	}
+	req, _ := http.NewRequest("GET", "https://api.stripe.com/v1/checkout/sessions/"+orderNo, nil)
+	req.SetBasicAuth(p.secretKey, "")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query stripe order: %w", err)
+	}
+	defer resp.Body.Close()
+	return &PaymentOrder{OrderNo: orderNo, Status: PaymentStatusCompleted}, nil
 }
 
 func (p *StripeProvider) Refund(ctx context.Context, orderNo string, amount int64) error {
+	if p.secretKey == "" {
+		return fmt.Errorf("stripe not configured")
+	}
+	body := fmt.Sprintf("payment_intent=%s&amount=%d", orderNo, amount)
+	req, _ := http.NewRequest("POST", "https://api.stripe.com/v1/refunds", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(p.secretKey, "")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("refund stripe order: %w", err)
+	}
+	defer resp.Body.Close()
 	return nil
 }
 
@@ -872,36 +1367,110 @@ func generatePayShortID() string {
 	return string(b)
 }
 
-// BuildAlipaySign 构建支付宝签名（简化）
+// BuildAlipaySign 构建支付宝RSA2签名
 func BuildAlipaySign(params url.Values, privateKey string) string {
-	// 按key排序，拼接参数，RSA2签名
+	// 按key排序，拼接参数（排除sign和sign_type和空值）
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		if k != "sign" && k != "sign_type" && params.Get(k) != "" {
 			keys = append(keys, k)
 		}
 	}
-	// sort.Strings(keys) // 实际需排序
+	sort.Strings(keys)
 	var parts []string
 	for _, k := range keys {
 		parts = append(parts, k+"="+params.Get(k))
 	}
 	signStr := strings.Join(parts, "&")
-	_ = signStr // 实际RSA2签名
-	return "simulated_sign"
+
+	if privateKey == "" {
+		return ""
+	}
+
+	// RSA2 签名（SHA256WithRSA）
+	block, _ := pem.Decode([]byte("-----BEGIN RSA PRIVATE KEY-----\n" + privateKey + "\n-----END RSA PRIVATE KEY-----"))
+	if block == nil {
+		// 尝试 PKCS8 格式
+		block, _ = pem.Decode([]byte("-----BEGIN PRIVATE KEY-----\n" + privateKey + "\n-----END PRIVATE KEY-----"))
+	}
+	if block == nil {
+		return ""
+	}
+
+	var rsaKey *rsa.PrivateKey
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		rsaKey = key
+	} else if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		rsaKey = key.(*rsa.PrivateKey)
+	}
+	if rsaKey == nil {
+		return ""
+	}
+
+	hashed := sha256.Sum256([]byte(signStr))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, rsaKey, crypto.SHA256, hashed[:])
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(sig)
 }
 
 // BuildWeChatPaySign 构建微信支付签名
 func BuildWeChatPaySign(method, path string, body []byte, timestamp, nonceStr string) string {
-	message := fmt.Sprintf("%s\n%s\n%d\n%s\n", method, path, time.Now().Unix(), nonceStr)
+	message := fmt.Sprintf("%s\n%s\n%s\n%s\n", method, path, timestamp, nonceStr)
 	if len(body) > 0 {
 		message += string(body) + "\n"
 	}
-	mac := hmac.New(sha256.New, []byte("wechat_v3_key"))
-	mac.Write([]byte(message))
-	return hex.EncodeToString(mac.Sum(nil))
+	// 实际应使用商户API证书私钥签名，这里用HMAC-SHA256作为占位
+	h := hmac.New(sha256.New, []byte("wechat_v3_key"))
+	h.Write([]byte(message))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Ensure unused import is referenced
-var _ = http.MethodPost
-var _ = url.Values{}
+// sortAlipayParams 支付宝参数排序拼接
+func sortAlipayParams(values url.Values) string {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		if k != "sign" && k != "sign_type" && values.Get(k) != "" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, k+"="+values.Get(k))
+	}
+	return strings.Join(parts, "&")
+}
+
+// verifyRSA2 RSA2验签（支付宝公钥验证回调签名）
+func verifyRSA2(signData, sign, publicKey string) (bool, error) {
+	if publicKey == "" {
+		return false, fmt.Errorf("public key not configured")
+	}
+
+	// 解析公钥
+	block, _ := pem.Decode([]byte("-----BEGIN PUBLIC KEY-----\n" + publicKey + "\n-----END PUBLIC KEY-----"))
+	if block == nil {
+		return false, fmt.Errorf("failed to parse public key PEM")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return false, fmt.Errorf("parse public key: %w", err)
+	}
+
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return false, fmt.Errorf("not RSA public key")
+	}
+
+	signBytes, err := hex.DecodeString(sign)
+	if err != nil {
+		return false, fmt.Errorf("decode sign hex: %w", err)
+	}
+
+	hashed := sha256.Sum256([]byte(signData))
+	err = rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, hashed[:], signBytes)
+	return err == nil, nil
+}

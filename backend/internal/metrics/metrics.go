@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -23,16 +24,18 @@ type PrometheusMetrics struct {
 	totalTokens     int64
 	totalAmount     int64
 
-	// 直方图（简化版，生产应用 Prometheus client_golang）
+	// 延迟数据（使用滑动窗口，保留最近10000条）
 	latencies []int
+	maxLatencies int
 }
 
 // NewPrometheusMetrics 创建Prometheus指标
 func NewPrometheusMetrics(logger *zap.Logger, rdb *redis.Client) *PrometheusMetrics {
 	return &PrometheusMetrics{
-		logger:   logger,
-		rdb:      rdb,
-		latencies: make([]int, 0, 1000),
+		logger:       logger,
+		rdb:          rdb,
+		latencies:    make([]int, 0, 10000),
+		maxLatencies: 10000,
 	}
 }
 
@@ -48,6 +51,10 @@ func (m *PrometheusMetrics) RecordRequest(ctx context.Context, model, provider, 
 	m.totalTokens += int64(tokens)
 	m.totalAmount += amount
 	m.latencies = append(m.latencies, latencyMs)
+	// 滑动窗口：超过上限则截断
+	if len(m.latencies) > m.maxLatencies {
+		m.latencies = m.latencies[len(m.latencies)-m.maxLatencies:]
+	}
 
 	// 写入Redis时间序列
 	minuteKey := time.Now().Format("200601021504")
@@ -168,20 +175,17 @@ func (m *PrometheusMetrics) percentiles() (int, int, int) {
 		return 0, 0, 0
 	}
 
-	// 复制并排序
 	sorted := make([]int, n)
 	copy(sorted, m.latencies)
-	for i := 0; i < n-1; i++ {
-		for j := i + 1; j < n; j++ {
-			if sorted[i] > sorted[j] {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Ints(sorted)
 
 	p50 := sorted[n*50/100]
 	p90 := sorted[n*90/100]
-	p99 := sorted[min(n-1, n*99/100)]
+	p99Idx := n * 99 / 100
+	if p99Idx >= n {
+		p99Idx = n - 1
+	}
+	p99 := sorted[p99Idx]
 
 	return p50, p90, p99
 }
@@ -299,11 +303,4 @@ func (am *AlertManager) Check(ctx context.Context, metrics map[string]interface{
 		// 设置冷却
 		am.rdb.Set(ctx, cooldownKey, 1, time.Duration(rule.Cooldown)*time.Second)
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

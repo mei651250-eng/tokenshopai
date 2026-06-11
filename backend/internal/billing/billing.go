@@ -2,8 +2,10 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	_ "embed"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -154,31 +156,81 @@ func (s *BillingService) calculateAmount(usage *gateway.Usage, model *gateway.Mo
 	return amountInCents
 }
 
-// convertCurrency 货币转换（简化版）
+// convertCurrency 货币转换
 func (s *BillingService) convertCurrency(amount float64, from, to string) float64 {
 	if from == to {
 		return amount
 	}
-	// 简化的汇率表，实际应从外部汇率API获取
+	rate := s.getExchangeRate(from, to)
+	if rate == 0 {
+		return amount
+	}
+	return amount * rate
+}
+
+// getExchangeRate 获取汇率（从缓存或外部API）
+func (s *BillingService) getExchangeRate(from, to string) float64 {
+	// 先从Redis缓存获取
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("exchange_rate:%s:%s", from, to)
+	if rate, err := s.rdb.Get(ctx, cacheKey).Float64(); err == nil && rate > 0 {
+		return rate
+	}
+
+	// 尝试从外部API获取（exchangerate-api.com 免费接口）
+	rate := s.fetchExternalRate(from, to)
+	if rate > 0 {
+		// 缓存1小时
+		s.rdb.Set(ctx, cacheKey, rate, 1*time.Hour)
+		return rate
+	}
+
+	// 回退到静态汇率表
 	rates := map[string]map[string]float64{
-		"USD": {"CNY": 7.25, "JPY": 155.0, "KRW": 1350.0, "EUR": 0.92},
-		"CNY": {"USD": 0.138, "JPY": 21.4, "KRW": 186.0, "EUR": 0.127},
+		"USD": {"CNY": 7.25, "JPY": 155.0, "KRW": 1350.0, "EUR": 0.92, "GBP": 0.79},
+		"CNY": {"USD": 0.138, "JPY": 21.4, "KRW": 186.0, "EUR": 0.127, "GBP": 0.109},
+		"EUR": {"USD": 1.087, "CNY": 7.88, "JPY": 168.5, "GBP": 0.86},
+		"GBP": {"USD": 1.266, "CNY": 9.18, "EUR": 1.165},
 	}
 
 	if rateMap, ok := rates[from]; ok {
-		if rate, ok := rateMap[to]; ok {
-			return amount * rate
+		if r, ok := rateMap[to]; ok {
+			return r
 		}
 	}
 
 	// 通过USD中转
-	if rate1, ok := rates[from]["USD"]; ok {
-		if rate2, ok := rates["USD"][to]; ok {
-			return amount * rate1 * rate2
+	if r1, ok := rates[from]["USD"]; ok {
+		if r2, ok := rates["USD"][to]; ok {
+			return r1 * r2
 		}
 	}
 
-	return amount
+	return 1.0
+}
+
+// fetchExternalRate 从外部API获取汇率
+func (s *BillingService) fetchExternalRate(from, to string) float64 {
+	url := fmt.Sprintf("https://open.er-api.com/v6/latest/%s", from)
+	resp, err := http.Get(url)
+	if err != nil {
+		s.logger.Warn("failed to fetch exchange rate", zap.Error(err))
+		return 0
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Rates map[string]float64 `json:"rates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		s.logger.Warn("failed to decode exchange rate response", zap.Error(err))
+		return 0
+	}
+
+	if rate, ok := result.Rates[to]; ok {
+		return rate
+	}
+	return 0
 }
 
 // GetBalance 获取余额

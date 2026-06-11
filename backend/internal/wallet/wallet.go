@@ -5,13 +5,18 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/sha3"
 	"go.uber.org/zap"
 )
 
@@ -178,8 +183,7 @@ func (s *WalletService) GenerateVerifyChallenge(ctx context.Context, address str
 	}, nil
 }
 
-// VerifySignature 验证钱包签名（EIP-191 / EIP-712）
-// 实际生产中应使用 go-ethereum 的 crypto.SigToPub 进行签名恢复
+// VerifySignature 验证钱包签名（EIP-191 personal_sign）
 func (s *WalletService) VerifySignature(ctx context.Context, address, signature string) (bool, error) {
 	key := fmt.Sprintf("wallet:challenge:%s", strings.ToLower(address))
 	challenge, err := s.rdb.Get(ctx, key).Result()
@@ -190,29 +194,130 @@ func (s *WalletService) VerifySignature(ctx context.Context, address, signature 
 		return false, fmt.Errorf("get challenge: %w", err)
 	}
 
-	// TODO: 使用 go-ethereum 的 crypto.VerifySignature 或 personal_ecRecover
-	// 这里简化处理，实际需要：
-	// 1. 对 challenge 进行 keccak256 哈希
-	// 2. 添加 Ethereum 前缀 "\x19Ethereum Signed Message:\n"
-	// 3. 使用 ecrecover 恢复签名者地址
-	// 4. 比较恢复的地址与提供的地址
-	_ = challenge
+	// 解码签名
+	sigHex := signature
+	if strings.HasPrefix(sigHex, "0x") {
+		sigHex = sigHex[2:]
+	}
+	sigBytes, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return false, fmt.Errorf("invalid signature hex: %w", err)
+	}
+	if len(sigBytes) != 65 {
+		return false, fmt.Errorf("invalid signature length: expected 65, got %d", len(sigBytes))
+	}
 
-	// 签名验证通过后删除挑战
+	// 构造 EIP-191 个人签名消息
+	prefixedMsg := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(challenge), challenge)
+	msgHash := keccak256Hash([]byte(prefixedMsg))
+
+	// 提取 r, s, v
+	r := new(big.Int).SetBytes(sigBytes[:32])
+	sVal := new(big.Int).SetBytes(sigBytes[32:64])
+	v := sigBytes[64]
+	if v < 27 {
+		v += 27
+	}
+
+	// 尝试恢复公钥并比对地址
+	matched := false
+	for _, recoveryID := range []byte{27, 28} {
+		pubKey, err := recoverEthPubKey(msgHash, r, sVal, recoveryID)
+		if err != nil {
+			continue
+		}
+		recoveredAddr := pubKeyToAddress(pubKey)
+		if strings.EqualFold(recoveredAddr, address) {
+			matched = true
+			break
+		}
+	}
+
+	// 无论验证成功与否，删除 challenge（防重放）
 	s.rdb.Del(ctx, key)
 
+	if !matched {
+		return false, nil
+	}
 	return true, nil
 }
 
-// VerifySignatureEVM EVM链签名验证（完整实现占位）
+// VerifySignatureEVM EVM链签名验证
 func (s *WalletService) VerifySignatureEVM(challenge, signature string, expectedAddr *ecdsa.PublicKey) bool {
-	// 实际实现:
-	// 1. hex decode signature -> 65 bytes (r:32, s:32, v:1)
-	// 2. 构造 Ethereum 签名消息: "\x19Ethereum Signed Message:\n" + len(challenge) + challenge
-	// 3. keccak256 哈希
-	// 4. ecrecover 恢复公钥
-	// 5. 从公钥推导地址并比较
-	return true
+	sigHex := signature
+	if strings.HasPrefix(sigHex, "0x") {
+		sigHex = sigHex[2:]
+	}
+	sigBytes, err := hex.DecodeString(sigHex)
+	if err != nil || len(sigBytes) != 65 {
+		return false
+	}
+
+	prefixedMsg := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(challenge), challenge)
+	msgHash := keccak256Hash([]byte(prefixedMsg))
+
+	r := new(big.Int).SetBytes(sigBytes[:32])
+	sVal := new(big.Int).SetBytes(sigBytes[32:64])
+	v := sigBytes[64]
+	if v < 27 {
+		v += 27
+	}
+
+	expectedAddrHex := pubKeyToAddress(expectedAddr)
+
+	for _, recoveryID := range []byte{27, 28} {
+		pubKey, err := recoverEthPubKey(msgHash, r, sVal, recoveryID)
+		if err != nil {
+			continue
+		}
+		if strings.EqualFold(pubKeyToAddress(pubKey), expectedAddrHex) {
+			return true
+		}
+	}
+	return false
+}
+
+// keccak256Hash 计算 Keccak-256 哈希
+func keccak256Hash(data []byte) []byte {
+	h := sha3.NewLegacyKeccak256()
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+// recoverEthPubKey 从签名恢复 secp256k1 公钥
+func recoverEthPubKey(msgHash []byte, r, s *big.Int, v byte) (*ecdsa.PublicKey, error) {
+	// 将 r, s 构造为 btcec 签名
+	sig := &btcec.Signature{
+		R: r,
+		S: s,
+	}
+
+	// 计算恢复 ID
+	recoveryID := int(v - 27)
+	if recoveryID < 0 || recoveryID > 3 {
+		return nil, fmt.Errorf("invalid recovery id: %d", recoveryID)
+	}
+
+	// 使用 btcec 恢复公钥
+	pubKey, _, err := sig.Recover(msgHash, btcec.RecoveryMode(recoveryID))
+	if err != nil {
+		return nil, fmt.Errorf("recover pubkey: %w", err)
+	}
+
+	return pubKey.ToECDSA(), nil
+}
+
+// pubKeyToAddress 从公钥推导 Ethereum 地址
+func pubKeyToAddress(pubKey *ecdsa.PublicKey) string {
+	// 未压缩公钥: 04 + x(32) + y(32)
+	pubBytes := make([]byte, 64)
+	x := pubKey.X.Bytes()
+	y := pubKey.Y.Bytes()
+	copy(pubBytes[32-len(x):32], x)
+	copy(pubBytes[64-len(y):64], y)
+
+	hash := keccak256Hash(pubBytes)
+	return hex.EncodeToString(hash[12:]) // 取后20字节
 }
 
 // BindWallet 绑定钱包
@@ -495,9 +600,63 @@ func (s *WalletService) ListDepositOrders(ctx context.Context, userID string, of
 	return orders, nil
 }
 
-// GetCryptoExchangeRate 获取加密货币汇率（简化版，实际应从Chainlink/Oracle获取）
+// GetCryptoExchangeRate 获取加密货币汇率（从外部API或缓存获取）
 func (s *WalletService) GetCryptoExchangeRate(ctx context.Context, crypto CryptoCurrency, fiat string) (float64, error) {
-	// 简化汇率，实际应从链上Oracle或交易所API获取实时价格
+	// 先从Redis缓存获取
+	cacheKey := fmt.Sprintf("crypto_rate:%s:%s", crypto, fiat)
+	if rate, err := s.rdb.Get(ctx, cacheKey).Float64(); err == nil && rate > 0 {
+		return rate, nil
+	}
+
+	// 从CoinGecko免费API获取
+	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=%s", cryptoToCoinGeckoID(crypto), strings.ToLower(fiat))
+	resp, err := http.Get(url)
+	if err != nil {
+		// 回退到静态汇率
+		return s.getFallbackRate(crypto, fiat)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]map[string]float64
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return s.getFallbackRate(crypto, fiat)
+	}
+
+	if coinData, ok := result[cryptoToCoinGeckoID(crypto)]; ok {
+		if rate, ok := coinData[strings.ToLower(fiat)]; ok {
+			// 缓存5分钟
+			s.rdb.Set(ctx, cacheKey, rate, 5*time.Minute)
+			return rate, nil
+		}
+	}
+
+	return s.getFallbackRate(crypto, fiat)
+}
+
+// cryptoToCoinGeckoID 转换为CoinGecko ID
+func cryptoToCoinGeckoID(crypto CryptoCurrency) string {
+	switch crypto {
+	case CryptoBTC:
+		return "bitcoin"
+	case CryptoETH:
+		return "ethereum"
+	case CryptoUSDT:
+		return "tether"
+	case CryptoUSDC:
+		return "usd-coin"
+	case CryptoSOL:
+		return "solana"
+	case CryptoBNB:
+		return "binancecoin"
+	case CryptoTRX:
+		return "tron"
+	default:
+		return strings.ToLower(string(crypto))
+	}
+}
+
+// getFallbackRate 回退到静态汇率
+func (s *WalletService) getFallbackRate(crypto CryptoCurrency, fiat string) (float64, error) {
 	rates := map[CryptoCurrency]map[string]float64{
 		CryptoUSDT: {"CNY": 7.25, "USD": 1.0, "EUR": 0.92, "JPY": 155.0, "KRW": 1350.0},
 		CryptoUSDC: {"CNY": 7.25, "USD": 1.0, "EUR": 0.92, "JPY": 155.0, "KRW": 1350.0},

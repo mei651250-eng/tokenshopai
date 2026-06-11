@@ -399,8 +399,8 @@ export const reportApi = {
     api.get('/admin/report/export', { params, responseType: 'blob' }),
 }
 
-// 用户管理 API
-export const userApi = {
+// 用户管理 API（管理端）
+export const adminUserApi = {
   list: (params?: { search?: string; role?: string; status?: string; page?: number }) =>
     api.get('/admin/users', { params }),
   create: (data: { email: string; password: string; role: string; display_name?: string; tenant_id?: string }) =>

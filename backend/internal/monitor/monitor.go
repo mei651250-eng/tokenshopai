@@ -1,7 +1,13 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/smtp"
+	"strings"
 	"sync"
 	"time"
 
@@ -208,7 +214,41 @@ func NewDingTalkChannel(webhookURL string) *DingTalkChannel {
 func (c *DingTalkChannel) Name() string { return "dingtalk" }
 
 func (c *DingTalkChannel) Send(ctx context.Context, alert *Alert) error {
-	// 实际实现：发送钉钉机器人消息
+	if c.webhookURL == "" {
+		return fmt.Errorf("dingtalk webhook url not configured")
+	}
+	// 构造钉钉机器人消息
+	color := "#FF0000"
+	if alert.Severity == "info" {
+		color = "#4CAF50"
+	} else if alert.Severity == "warning" {
+		color = "#FF9800"
+	}
+	message := map[string]interface{}{
+		"msgtype": "markdown",
+		"markdown": map[string]string{
+			"title": fmt.Sprintf("[%s] %s", strings.ToUpper(alert.Severity), alert.Title),
+			"text":  fmt.Sprintf("### %s\n\n> **严重级别**: %s\n\n> **类型**: %s\n\n> **详情**: %s\n\n> **时间**: %s\n", alert.Title, alert.Severity, alert.Type, alert.Message, alert.CreatedAt.Format("2006-01-02 15:04:05")),
+		},
+	}
+	body, _ := json.Marshal(message)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.webhookURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create dingtalk request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send dingtalk message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("dingtalk returned status %d", resp.StatusCode)
+	}
 	return nil
 }
 
@@ -227,6 +267,22 @@ func NewEmailChannel(host string, port int, from string, to []string) *EmailChan
 func (c *EmailChannel) Name() string { return "email" }
 
 func (c *EmailChannel) Send(ctx context.Context, alert *Alert) error {
-	// 实际实现：发送邮件
-	return nil
+	if c.smtpHost == "" {
+		return fmt.Errorf("email smtp host not configured")
+	}
+	// 构造邮件内容
+	subject := fmt.Sprintf("[%s] %s - %s", strings.ToUpper(alert.Severity), alert.Type, alert.Title)
+	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"+
+		"<h2>TokenHub 告警通知</h2>"+
+		"<p><strong>严重级别:</strong> %s</p>"+
+		"<p><strong>告警类型:</strong> %s</p>"+
+		"<p><strong>标题:</strong> %s</p>"+
+		"<p><strong>详情:</strong> %s</p>"+
+		"<p><strong>时间:</strong> %s</p>",
+		c.from, strings.Join(c.to, ","), subject,
+		alert.Severity, alert.Type, alert.Title, alert.Message, alert.CreatedAt.Format("2006-01-02 15:04:05"))
+
+	addr := fmt.Sprintf("%s:%d", c.smtpHost, c.smtpPort)
+	auth := smtp.PlainAuth("", c.from, "", c.smtpHost) // 简化：无密码认证场景
+	return smtp.SendMail(addr, auth, c.from, c.to, []byte(body))
 }
