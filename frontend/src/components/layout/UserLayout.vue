@@ -55,6 +55,35 @@
           <span class="text-sm font-medium text-green-700 dark:text-green-400">¥{{ balance / 100 }}</span>
         </div>
 
+        <!-- Language Switcher -->
+        <el-dropdown trigger="click" @command="handleLocaleChange">
+          <button class="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+            <el-icon :size="18"><Globe /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="zh-CN">简体中文</el-dropdown-item>
+              <el-dropdown-item command="zh-TW">繁體中文</el-dropdown-item>
+              <el-dropdown-item command="en-US">English</el-dropdown-item>
+              <el-dropdown-item command="ja-JP">日本語</el-dropdown-item>
+              <el-dropdown-item command="ko-KR">한국어</el-dropdown-item>
+              <el-dropdown-item command="fr-FR">Français</el-dropdown-item>
+              <el-dropdown-item command="de-DE">Deutsch</el-dropdown-item>
+              <el-dropdown-item command="es-ES">Español</el-dropdown-item>
+              <el-dropdown-item command="pt-BR">Português</el-dropdown-item>
+              <el-dropdown-item command="it-IT">Italiano</el-dropdown-item>
+              <el-dropdown-item command="ru-RU">Русский</el-dropdown-item>
+              <el-dropdown-item command="ar-SA">العربية</el-dropdown-item>
+              <el-dropdown-item command="hi-IN">हिन्दी</el-dropdown-item>
+              <el-dropdown-item command="id-ID">Bahasa Indonesia</el-dropdown-item>
+              <el-dropdown-item command="vi-VN">Tiếng Việt</el-dropdown-item>
+              <el-dropdown-item command="th-TH">ไทย</el-dropdown-item>
+              <el-dropdown-item command="tr-TR">Türkçe</el-dropdown-item>
+              <el-dropdown-item command="nl-NL">Nederlands</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
         <!-- Dark Mode Toggle -->
         <el-tooltip :content="appStore.darkMode ? '浅色模式' : '深色模式'" placement="bottom">
           <button
@@ -129,6 +158,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
@@ -136,11 +166,12 @@ import { adminApi, userApi } from '@/api'
 import {
   DataBoard, Key, ShoppingCart, Reading, CreditCard,
   Wallet, Money, Bell, User, SwitchButton,
-  Sunny, Moon, Share, Setting, TrendCharts,
+  Sunny, Moon, Share, Setting, TrendCharts, Globe,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
+const { locale: i18nLocale } = useI18n()
 const userStore = useUserStore()
 const appStore = useAppStore()
 const notifStore = useNotificationStore()
@@ -180,6 +211,11 @@ function handleUserCommand(cmd: string) {
     userStore.logout()
     router.push('/login')
   }
+}
+
+function handleLocaleChange(locale: string) {
+  i18nLocale.value = locale
+  userStore.setLocale(locale)
 }
 
 async function loadBalance() {

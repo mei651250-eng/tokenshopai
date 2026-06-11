@@ -210,6 +210,20 @@ i18n:
     - en-US
     - ja-JP
     - ko-KR
+    - zh-TW
+    - fr-FR
+    - de-DE
+    - es-ES
+    - pt-BR
+    - it-IT
+    - ru-RU
+    - ar-SA
+    - hi-IN
+    - id-ID
+    - vi-VN
+    - th-TH
+    - tr-TR
+    - nl-NL
 
 # 密钥保险库配置
 keyvault:

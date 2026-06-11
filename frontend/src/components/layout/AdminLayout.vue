@@ -87,6 +87,35 @@
           </button>
         </el-tooltip>
 
+        <!-- Language Switcher -->
+        <el-dropdown trigger="click" @command="handleLocaleChange">
+          <button class="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+            <el-icon :size="18"><Globe /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="zh-CN">简体中文</el-dropdown-item>
+              <el-dropdown-item command="zh-TW">繁體中文</el-dropdown-item>
+              <el-dropdown-item command="en-US">English</el-dropdown-item>
+              <el-dropdown-item command="ja-JP">日本語</el-dropdown-item>
+              <el-dropdown-item command="ko-KR">한국어</el-dropdown-item>
+              <el-dropdown-item command="fr-FR">Français</el-dropdown-item>
+              <el-dropdown-item command="de-DE">Deutsch</el-dropdown-item>
+              <el-dropdown-item command="es-ES">Español</el-dropdown-item>
+              <el-dropdown-item command="pt-BR">Português</el-dropdown-item>
+              <el-dropdown-item command="it-IT">Italiano</el-dropdown-item>
+              <el-dropdown-item command="ru-RU">Русский</el-dropdown-item>
+              <el-dropdown-item command="ar-SA">العربية</el-dropdown-item>
+              <el-dropdown-item command="hi-IN">हिन्दी</el-dropdown-item>
+              <el-dropdown-item command="id-ID">Bahasa Indonesia</el-dropdown-item>
+              <el-dropdown-item command="vi-VN">Tiếng Việt</el-dropdown-item>
+              <el-dropdown-item command="th-TH">ไทย</el-dropdown-item>
+              <el-dropdown-item command="tr-TR">Türkçe</el-dropdown-item>
+              <el-dropdown-item command="nl-NL">Nederlands</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
         <!-- Dark Mode Toggle -->
         <el-tooltip :content="appStore.darkMode ? t('nav.lightMode') : t('nav.darkMode')" placement="bottom">
           <button
@@ -273,11 +302,12 @@ import {
   User as UserIcon, Key, Tickets, Promotion,
   TrendCharts, Histogram, Connection, CircleCheck,
   Reading, ShoppingCart, Present, Notification, Operation, UserFilled, Share,
+  Globe,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
+const { t, locale: i18nLocale } = useI18n()
 const userStore = useUserStore()
 const appStore = useAppStore()
 const notifStore = useNotificationStore()
@@ -382,6 +412,11 @@ function handleUserCommand(cmd: string) {
   if (cmd === 'profile') router.push('/profile')
   else if (cmd === 'userportal') router.push('/home')
   else if (cmd === 'logout') handleLogout()
+}
+
+function handleLocaleChange(locale: string) {
+  i18nLocale.value = locale
+  userStore.setLocale(locale)
 }
 
 function toggleFullscreen() {
