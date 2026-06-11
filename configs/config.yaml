@@ -1,9 +1,11 @@
 server:
   port: 8080
-  mode: debug
+  mode: debug  # debug | release | test
   read_timeout: 30s
   write_timeout: 120s
   graceful_wait: 15s
+  # WebAuthn Relying Party 配置
+  webauthn_origin: "http://localhost:3001"  # 生产环境改为 https://tokenshopai.com
 
 database:
   host: localhost
@@ -17,13 +19,13 @@ database:
 
 redis:
   addr: localhost:6379
-  password: ""
+  password: ""  # 生产环境必须设置密码，通过环境变量 REDIS_PASSWORD 覆盖
   db: 0
   pool_size: 100
   min_idle_conns: 10
 
 jwt:
-  secret: "your-super-secret-key-change-in-production"
+  secret: ""  # 必须通过环境变量 JWT_SECRET 设置，启动时校验非空
   expire: 24h
   issuer: tokenhub
   refresh_exp: 168h
@@ -177,6 +179,29 @@ security:
   enable_desensitize: true
   blocked_ips: []
   max_request_body: 10485760
+  # CORS 跨域配置
+  cors:
+    allowed_origins:
+      - "https://tokenshopai.com"
+      - "https://www.tokenshopai.com"
+    # 开发模式下可添加本地地址
+    # - "http://localhost:3000"
+    # - "http://localhost:5173"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "OPTIONS"
+      - "PATCH"
+    allowed_headers:
+      - "Origin"
+      - "Content-Type"
+      - "Authorization"
+      - "X-API-Key"
+      - "X-Tenant-ID"
+      - "X-Request-ID"
+    max_age: 86400
 
 i18n:
   default_locale: zh-CN
@@ -188,8 +213,9 @@ i18n:
 
 # 密钥保险库配置
 keyvault:
-  # 主加密密钥（生产环境必须从环境变量 KEYVAULT_MASTER_KEY 加载，不能硬编码）
-  master_key: "change-me-in-production-32bytes!"
+  # 主加密密钥（必须通过环境变量 KEYVAULT_MASTER_KEY 设置，不能使用默认值）
+  # 启动时会校验密钥长度 >= 32 字节
+  master_key: ""
 
 # 智能路由配置
 smart_router:

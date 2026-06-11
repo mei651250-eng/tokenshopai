@@ -68,6 +68,18 @@ func main() {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
+	// 配置校验
+	warnings, errors := cfg.Validate()
+	for _, w := range warnings {
+		fmt.Printf("[CONFIG WARNING] %s\n", w)
+	}
+	if len(errors) > 0 && cfg.Server.Mode == "release" {
+		panic(fmt.Sprintf("Configuration errors (must fix for production):\n  %s", strings.Join(errors, "\n  ")))
+	}
+	for _, e := range errors {
+		fmt.Printf("[CONFIG ERROR] %s\n", e)
+	}
+
 	// 2. 初始化日志
 	logger := initLogger(cfg.Server.Mode)
 	defer logger.Sync()
@@ -145,8 +157,12 @@ func main() {
 	// 对账服务
 	reconService := reconciliation.NewReconciliationService(logger, rdb)
 
-	// 密钥保险库
-	keyVault := keyvault.NewKeyVault(logger, rdb, os.Getenv("KEYVAULT_MASTER_KEY"))
+	// 密钥保险库（优先使用环境变量，其次使用配置文件）
+	kvMasterKey := os.Getenv("KEYVAULT_MASTER_KEY")
+	if kvMasterKey == "" {
+		kvMasterKey = cfg.KeyVault.MasterKey
+	}
+	keyVault := keyvault.NewKeyVault(logger, rdb, kvMasterKey)
 
 	// 分销服务
 	distService := distribution.NewDistributionService(logger, rdb)
@@ -192,8 +208,15 @@ func main() {
 	emailSender := auth.NewSMTPEmailSender(cfg.Verification.Email.SMTP.Host, cfg.Verification.Email.SMTP.Port, cfg.Verification.Email.SMTP.Username, cfg.Verification.Email.SMTP.Password, cfg.Verification.Email.SMTP.FromAddr, cfg.Verification.Email.SMTP.FromName)
 	verificationService := auth.NewVerificationService(logger, rdb, smsSender, emailSender)
 
-	// 人脸识别服务（WebAuthn）
-	faceAuthService := auth.NewFaceAuthService(db, rdb, logger, "localhost", "TokenHub", "http://localhost:3001")
+	// 人脸识别服务（WebAuthn）- 使用配置或环境变量设置 origin
+	webAuthnOrigin := os.Getenv("WEBAUTHN_ORIGIN")
+	if webAuthnOrigin == "" {
+		webAuthnOrigin = "http://localhost:3001"
+		if cfg.Server.Mode == "release" {
+			webAuthnOrigin = "https://tokenshopai.com"
+		}
+	}
+	faceAuthService := auth.NewFaceAuthService(db, rdb, logger, "localhost", "TokenHub", webAuthnOrigin)
 
 	logger.Info("services initialized",
 		zap.String("lb_strategy", string(lb.StrategyWeightedRandom)),
@@ -208,37 +231,51 @@ func main() {
 
 	engine := gin.New()
 	engine.Use(gin.Recovery())
-	engine.Use(middleware.CORSMiddleware(nil)) // 开发模式允许所有来源，生产环境应传入允许的域名列表
+	engine.Use(middleware.CORSMiddleware(cfg.Security.CORS.AllowedOrigins))
 	engine.Use(middleware.RequestIDMiddleware())
 	engine.Use(middleware.MetricsMiddleware(monitorService, logger))
 
-	// 健康检查
+	// 健康检查（含详细依赖状态）
 	engine.GET("/health", func(c *gin.Context) {
+		checks := gin.H{}
+		overall := "healthy"
+
 		// 检查数据库连接
 		sqlDB, err := db.DB()
 		dbStatus := "ok"
 		if err != nil || sqlDB.Ping() != nil {
 			dbStatus = "error"
+			overall = "degraded"
 		}
+		// 数据库连接池统计
+		dbStats := gin.H{"status": dbStatus}
+		if sqlDB != nil {
+			stats := sqlDB.Stats()
+			dbStats["open_connections"] = stats.OpenConnections
+			dbStats["idle_connections"] = stats.Idle
+			dbStats["in_use"] = stats.InUse
+		}
+		checks["database"] = dbStats
+
 		// 检查Redis连接
 		redisStatus := "ok"
-		if rdb.Ping(ctx).Err() != nil {
+		redisLatency := int64(0)
+		start := time.Now()
+		if rdb.Ping(c.Request.Context()).Err() != nil {
 			redisStatus = "error"
-		}
-
-		overall := "healthy"
-		if dbStatus != "ok" || redisStatus != "ok" {
 			overall = "degraded"
+		}
+		redisLatency = time.Since(start).Milliseconds()
+		checks["redis"] = gin.H{
+			"status":  redisStatus,
+			"latency": fmt.Sprintf("%dms", redisLatency),
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"status":    overall,
-			"version":   "0.1.0",
-			"time":      time.Now().Format(time.RFC3339),
-			"checks": gin.H{
-				"database": dbStatus,
-				"redis":    redisStatus,
-			},
+			"status":  overall,
+			"version": "0.1.0",
+			"time":    time.Now().Format(time.RFC3339),
+			"checks":  checks,
 		})
 	})
 
@@ -3396,6 +3433,7 @@ func initSuperAdmin(db *gorm.DB, logger *zap.Logger) {
 	adminPassword := os.Getenv("ADMIN_PASSWORD")
 	if adminPassword == "" {
 		adminPassword = "admin123456"
+		logger.Warn("using default admin password; set ADMIN_PASSWORD environment variable for production")
 	}
 
 	// 检查是否已存在超级管理员

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"time"
 
 	"github.com/spf13/viper"
@@ -20,6 +21,17 @@ type Config struct {
 	Monitor      MonitorConfig      `mapstructure:"monitor"`
 	Security     SecurityConfig     `mapstructure:"security"`
 	I18n         I18nConfig         `mapstructure:"i18n"`
+	KeyVault     KeyVaultConfig     `mapstructure:"keyvault"`
+	Admin        AdminConfig        `mapstructure:"admin"`
+}
+
+type KeyVaultConfig struct {
+	MasterKey string `mapstructure:"master_key"`
+}
+
+type AdminConfig struct {
+	Email    string `mapstructure:"email"`
+	Password string `mapstructure:"password"`
 }
 
 type ServerConfig struct {
@@ -78,10 +90,18 @@ type MonitorConfig struct {
 }
 
 type SecurityConfig struct {
-	EnableWAF       bool     `mapstructure:"enable_waf"`
-	EnableDesensitize bool   `mapstructure:"enable_desensitize"`
-	BlockedIPs      []string `mapstructure:"blocked_ips"`
-	MaxRequestBody  int64    `mapstructure:"max_request_body"`
+	EnableWAF       bool       `mapstructure:"enable_waf"`
+	EnableDesensitize bool     `mapstructure:"enable_desensitize"`
+	BlockedIPs      []string   `mapstructure:"blocked_ips"`
+	MaxRequestBody  int64      `mapstructure:"max_request_body"`
+	CORS            CORSConfig `mapstructure:"cors"`
+}
+
+type CORSConfig struct {
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	AllowedMethods []string `mapstructure:"allowed_methods"`
+	AllowedHeaders []string `mapstructure:"allowed_headers"`
+	MaxAge         int      `mapstructure:"max_age"`
 }
 
 type I18nConfig struct {
@@ -259,10 +279,15 @@ type SendGridConfig struct {
 	FromName  string `mapstructure:"from_name"`
 }
 
-// Load 加载配置
+// Load 加载配置，支持环境变量覆盖
 func Load(path string) (*Config, error) {
 	viper.SetConfigFile(path)
 	viper.AutomaticEnv()
+	// 环境变量前缀映射，方便 Kubernetes/Docker 部署
+	viper.BindEnv("jwt.secret", "JWT_SECRET")
+	viper.BindEnv("database.password", "DB_PASSWORD")
+	viper.BindEnv("redis.password", "REDIS_PASSWORD")
+	viper.BindEnv("keyvault.master_key", "KEYVAULT_MASTER_KEY")
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
@@ -273,5 +298,60 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// 环境变量覆盖关键敏感配置
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWT.Secret = v
+	}
+	if v := os.Getenv("DB_PASSWORD"); v != "" {
+		cfg.Database.Password = v
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		cfg.Redis.Password = v
+	}
+	if v := os.Getenv("KEYVAULT_MASTER_KEY"); v != "" {
+		cfg.KeyVault.MasterKey = v
+	}
+
 	return &cfg, nil
+}
+
+// Validate 校验关键配置项，返回警告和错误列表
+func (c *Config) Validate() (warnings []string, errors []string) {
+	// JWT Secret 必须设置且足够长
+	if c.JWT.Secret == "" {
+		errors = append(errors, "jwt.secret is required (set JWT_SECRET env var)")
+	} else if len(c.JWT.Secret) < 32 {
+		warnings = append(warnings, "jwt.secret should be at least 32 characters for security")
+	}
+
+	// KeyVault 主密钥检查
+	if c.KeyVault.MasterKey == "" {
+		warnings = append(warnings, "keyvault.master_key is empty (set KEYVAULT_MASTER_KEY env var); encrypted key storage will be disabled")
+	} else if len(c.KeyVault.MasterKey) < 32 {
+		errors = append(errors, "keyvault.master_key must be at least 32 bytes")
+	}
+
+	// 数据库密码检查
+	if c.Database.Password == "" {
+		warnings = append(warnings, "database.password is empty; not recommended for production")
+	}
+
+	// Redis 密码检查
+	if c.Redis.Password == "" {
+		warnings = append(warnings, "redis.password is empty; not recommended for production")
+	}
+
+	// CORS 检查
+	if len(c.Security.CORS.AllowedOrigins) == 0 {
+		warnings = append(warnings, "security.cors.allowed_origins is empty; CORS will allow all origins (not safe for production)")
+	}
+
+	// Admin 密码强度检查（仅当使用默认密码时警告）
+	if c.Server.Mode == "release" {
+		if c.Database.Password == "tokenhub_secret" {
+			errors = append(errors, "database.password is using default value 'tokenhub_secret'; must change in production")
+		}
+	}
+
+	return warnings, errors
 }

@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -143,24 +145,34 @@ func TenantMiddleware() gin.HandlerFunc {
 }
 
 // WAFMiddleware WAF中间件
-func WAFMiddleware(waf *waf.WAF) gin.HandlerFunc {
+func WAFMiddleware(wafEngine *waf.WAF) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !waf.IsEnabled() {
+		if !wafEngine.IsEnabled() {
 			c.Next()
 			return
 		}
 
 		clientIP := c.ClientIP()
 
-		// 检查请求体
-		var content string
+		// 检查 URL + 请求体
+		var content strings.Builder
+		content.WriteString(c.Request.URL.String())
+
 		if c.Request.Body != nil {
-			// 读取body后需要重新设置，因为body只能读一次
-			// 生产环境应使用 io.ReadAll + io.NopCloser
-			content = c.Request.URL.String()
+			bodyBytes, err := io.ReadAll(c.Request.Body)
+			if err == nil && len(bodyBytes) > 0 {
+				// 限制检查的 body 大小，防止内存溢出
+				if len(bodyBytes) > 65536 {
+					bodyBytes = bodyBytes[:65536]
+				}
+				content.WriteString(" ")
+				content.Write(bodyBytes)
+				// 恢复 body 供后续 handler 使用
+				c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			}
 		}
 
-		result := waf.CheckRequest(clientIP, content)
+		result := wafEngine.CheckRequest(clientIP, content.String())
 		if result.Blocked {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error": map[string]string{
@@ -176,10 +188,9 @@ func WAFMiddleware(waf *waf.WAF) gin.HandlerFunc {
 }
 
 // CORSMiddleware 跨域中间件
-// 生产环境应限制允许的Origin，而非使用通配符 *
+// allowedOrigins: 允许的域名列表。空列表表示开发模式允许所有来源（不携带凭证）。
+// 生产环境必须配置具体域名列表，此时支持携带凭证。
 func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
-	// 如果未配置允许的Origin列表，则使用默认安全策略
-	// 空列表表示开发模式，允许所有来源
 	allowAll := len(allowedOrigins) == 0
 
 	originSet := make(map[string]bool, len(allowedOrigins))
@@ -191,13 +202,15 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 		origin := c.GetHeader("Origin")
 
 		if allowAll {
+			// 开发模式：允许所有来源，但不设置 Credentials（CORS 规范不允许 * + credentials）
 			c.Header("Access-Control-Allow-Origin", "*")
 		} else if origin != "" && originSet[origin] {
-			// 仅允许配置列表中的Origin
+			// 生产模式：仅允许配置列表中的 Origin，支持携带凭证
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Credentials", "true")
 		} else {
-			// Origin不在白名单中，不设置CORS头，浏览器将阻止跨域请求
+			// Origin 不在白名单中，不设置 CORS 头，浏览器将阻止跨域请求
 			if c.Request.Method == "OPTIONS" {
 				c.AbortWithStatus(http.StatusForbidden)
 				return
@@ -208,7 +221,6 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-API-Key, X-Tenant-ID, X-Request-ID")
-		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {

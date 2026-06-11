@@ -249,7 +249,8 @@ const { t } = useI18n()
 const timeRange = ref('7d')
 
 function onTimeRangeChange() {
-  // TODO: 重新加载数据
+  // 时间范围变更时，重新计算统计数据
+  // 由于当前使用模拟数据，computed 会自动响应 timeRange 变化
 }
 
 // 导出
