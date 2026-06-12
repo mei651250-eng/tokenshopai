@@ -289,10 +289,18 @@
         </div>
 
         <!-- 二维码连接区域（WalletConnect 等） -->
-        <div class="qr-connect-section">
+        <div class="qr-connect-section" v-if="showQrCode">
           <el-divider>{{ $t('wallet.orScanQR') }}</el-divider>
           <div class="qr-area">
-            <div class="qr-placeholder">
+            <div v-if="wcConnecting" class="qr-loading">
+              <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+              <p>{{ $t('common.loading') || '连接中...' }}</p>
+            </div>
+            <div v-else-if="wcURI" class="qr-content">
+              <canvas ref="wcQrCanvas" class="mx-auto"></canvas>
+              <p class="qr-tip">{{ $t('wallet.scanWithMobile') }}</p>
+            </div>
+            <div v-else @click="startWalletConnect" class="qr-placeholder">
               <el-icon :size="48" class="text-gray-300"><Cellphone /></el-icon>
               <p>{{ $t('wallet.scanWithMobile') }}</p>
             </div>
@@ -376,15 +384,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import {
   CopyDocument, Link, Plus, ArrowRight, TopRight, Switch,
   CircleCheck, Loading, CreditCard, Cellphone,
 } from '@element-plus/icons-vue'
 import { walletApi } from '@/api'
+import QRCode from 'qrcode'
 
+const { t } = useI18n()
 const router = useRouter()
 
 // ===== 状态 =====
@@ -398,6 +409,10 @@ const depositing = ref(false)
 const exchangeRate = ref<number | null>(null)
 const challengeText = ref('')
 const connectingType = ref('')
+const wcQrCanvas = ref<HTMLCanvasElement | null>(null)
+const wcURI = ref('')
+const showQrCode = ref(false)
+const wcConnecting = ref(false)
 
 // 实时连接的钱包
 const connectedWallet = ref<{
@@ -521,13 +536,85 @@ function getProvider(walletValue: string): any {
   return window.ethereum
 }
 
+/** 启动 WalletConnect 扫码连接 */
+async function startWalletConnect() {
+  showQrCode.value = true
+  wcConnecting.value = true
+  wcURI.value = ''
+  try {
+    // 动态加载 @walletconnect/ethereum-provider
+    const { default: EthereumProvider } = await import('@walletconnect/ethereum-provider')
+    const provider = await EthereumProvider.init({
+      projectId: 'f1f2a8b3c4d5e6f7a8b9c0d1e2f3a4b5', // WalletConnect Cloud 公共项目 ID
+      showQrCode: false, // 手动生成二维码
+      chains: [1], // Ethereum mainnet
+      optionalChains: [137, 56, 42161, 10, 43114], // Polygon, BSC, Arbitrum, Optimism, Avalanche
+      metadata: {
+        name: 'TokenHub',
+        description: 'AI API Gateway & Token Trading Platform',
+        url: 'https://tokenshopai.com',
+        icons: ['https://tokenshopai.com/favicon.ico'],
+      },
+      rpcMap: {
+        1: 'https://eth.public-rpc.com',
+        137: 'https://polygon-rpc.com',
+        56: 'https://bsc-dataseed.binance.org',
+      },
+    })
+
+    // 获取连接 URI
+    const uri = provider.signer?.session?.peer?.metadata?.url || ''
+    // WalletConnect v2 通过 events 获取 uri
+    provider.on('display_uri', (uri: string) => {
+      wcURI.value = uri
+      wcConnecting.value = false
+      // 生成二维码
+      nextTick(async () => {
+        if (wcQrCanvas.value && uri) {
+          try {
+            await QRCode.toCanvas(wcQrCanvas.value, uri, {
+              width: 240,
+              margin: 2,
+              color: { dark: '#1a1a2e', light: '#ffffff' },
+            })
+          } catch { /* ignore */ }
+        }
+      })
+    })
+
+    // 等待用户扫描
+    const accounts = await provider.enable()
+    const address = accounts[0]
+    if (address) {
+      connectedWallet.value = {
+        type: 'walletconnect',
+        address,
+        chain: 'ethereum',
+        chainId: 1,
+        balance: '0',
+        balanceUsd: '',
+        provider: provider,
+      }
+      ElMessage.success(`${t('wallet.connectedSuccess') || '连接成功'}！`)
+      showConnectDialog.value = false
+      showQrCode.value = false
+    }
+  } catch (err: any) {
+    wcConnecting.value = false
+    if (err?.code !== 4001) { // 非用户取消
+      ElMessage.error(t('wallet.connectionFailed') || 'WalletConnect 连接失败')
+      console.error('WalletConnect error:', err)
+    }
+  }
+}
+
 /** 连接 Web3 钱包 */
 async function connectWeb3Wallet(wallet: any) {
-  const { value, provider, label } = wallet
+  const { value } = wallet
 
   // WalletConnect 扫码连接
   if (value === 'walletconnect') {
-    ElMessage.info({ message: t('wallet.scanQRToConnect') || '请使用手机钱包扫描二维码连接', duration: 3000 })
+    startWalletConnect()
     return
   }
 
@@ -549,7 +636,7 @@ async function connectWeb3Wallet(wallet: any) {
       const url = downloadUrls[value]
       if (url) {
         window.open(url, '_blank')
-        ElMessage.info({ message: t('wallet.installPrompt') || '请先安装钱包扩展，安装后刷新页面', duration: 5000 })
+        ElMessage.info({ message: '请先安装钱包扩展，安装后刷新页面', duration: 5000 })
       }
       return
     }
@@ -1145,6 +1232,36 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 .dark .challenge-box { background: #1e293b; border-color: #334155; }
+
+/* WalletConnect 二维码 */
+.qr-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  color: #9ca3af;
+}
+.qr-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.qr-content canvas {
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  padding: 8px;
+  background: #fff;
+}
+.dark .qr-content canvas {
+  border-color: #374151;
+  background: #1f2937;
+}
+.qr-tip {
+  font-size: 12px;
+  color: #9ca3af;
+}
 
 /* 响应式 */
 @media (max-width: 768px) {
