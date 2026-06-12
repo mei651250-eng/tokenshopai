@@ -92,6 +92,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/topup/TopUpView.vue'),
       },
       {
+        path: '/payment',
+        name: 'Payment',
+        component: () => import('@/views/payment/PaymentView.vue'),
+      },
+      {
         path: '/billing',
         name: 'Billing',
         component: () => import('@/views/billing/BillingView.vue'),

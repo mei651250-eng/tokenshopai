@@ -42,7 +42,7 @@
           class="border-2 rounded-xl p-4 cursor-pointer transition-all flex items-center gap-3"
           :class="selectedChannel === ch.channel ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-indigo-300'"
           @click="selectedChannel = ch.channel">
-          <span class="text-2xl">{{ ch.icon }}</span>
+          <img :src="ch.icon" :alt="ch.name" class="w-10 h-10 object-contain" />
           <div>
             <p class="font-medium text-gray-900 dark:text-white">{{ ch.name }}</p>
             <p class="text-xs text-gray-500">{{ ch.desc }}</p>
@@ -124,10 +124,10 @@ const packages = [
 ]
 
 const paymentChannels = [
-  { channel: 'alipay', name: '支付宝', desc: '即时到账', icon: '💳' },
-  { channel: 'wechat_pay', name: '微信支付', desc: '扫码支付', icon: '💚' },
-  { channel: 'stripe', name: 'Stripe', desc: '国际信用卡', icon: '🌍' },
-  { channel: 'crypto', name: 'USDT', desc: '加密货币', icon: '₮' },
+  { channel: 'alipay', name: '支付宝', desc: '即时到账', icon: '/icons/alipay.svg' },
+  { channel: 'wechat_pay', name: '微信支付', desc: '扫码支付', icon: '/icons/wechat_pay.svg' },
+  { channel: 'stripe', name: 'Stripe', desc: '国际信用卡', icon: '/icons/stripe.svg' },
+  { channel: 'crypto', name: 'USDT', desc: '加密货币', icon: '/icons/crypto.svg' },
 ]
 
 function selectPackage(pkg: { amount: number }) {
