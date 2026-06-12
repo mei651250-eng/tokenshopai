@@ -208,8 +208,6 @@ export default {
     testConsole: 'คอนโซลทดสอบ', testPlaceholder: 'ข้อความทดสอบ...', sendTest: 'ส่งทดสอบ',
     testError: 'การทดสอบล้มเหลว',
   },
-  billing: {
-  },
   tenants: {
     detail: 'รายละเอียดผู้เช่า', active: 'ใช้งาน', suspended: 'ระงับ', inactive: 'ไม่ใช้งาน',
     userCount: 'ผู้ใช้', apiKeys: 'คีย์ API', monthlyUsage: 'การใช้งานรายเดือน', plan: 'แผน',

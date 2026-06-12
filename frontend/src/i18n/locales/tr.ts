@@ -209,8 +209,6 @@ export default {
     testConsole: 'Test Konsolu', testPlaceholder: 'Test mesajı girin...', sendTest: 'Test Gönder',
     testError: 'Test başarısız',
   },
-  billing: {
-  },
   tenants: {
     detail: 'Kiracı Detayı', active: 'Aktif', suspended: 'Askıda', inactive: 'Pasif',
     userCount: 'Kullanıcı', apiKeys: 'API Anahtarları', monthlyUsage: 'Aylık Kullanım', plan: 'Plan',

@@ -222,8 +222,6 @@ export default {
     timeoutUnit: 'сек', rateLimitSaved: 'Лимит сохранен', testConsole: 'Консоль',
     testPlaceholder: 'Тестовое сообщение...', sendTest: 'Отправить', testError: 'Тест не удался',
   },
-  billing: {
-  },
   tenants: {
     detail: 'Детали арендатора', active: 'Активен', suspended: 'Приостановлен', inactive: 'Неактивен',
     userCount: 'Пользователи', apiKeys: 'API ключи', monthlyUsage: 'Месячное использование', plan: 'Тариф',

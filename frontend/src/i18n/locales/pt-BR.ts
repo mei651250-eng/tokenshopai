@@ -221,8 +221,6 @@ export default {
     rateLimitSaved: 'Limite salvo', testConsole: 'Console', testPlaceholder: 'Mensagem teste...',
     sendTest: 'Enviar', testError: 'Falha no teste',
   },
-  billing: {
-  },
   tenants: {
     detail: 'Detalhes do Inquilino', active: 'Ativo', suspended: 'Suspenso', inactive: 'Inativo',
     userCount: 'Usuários', apiKeys: 'Chaves API', monthlyUsage: 'Uso Mensal', plan: 'Plano',

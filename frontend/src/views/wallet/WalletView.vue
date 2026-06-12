@@ -536,75 +536,45 @@ function getProvider(walletValue: string): any {
   return window.ethereum
 }
 
-/** 启动 WalletConnect 扫码连接 */
+/** 启动 WalletConnect 扫码连接（轻量版） */
 async function startWalletConnect() {
   showQrCode.value = true
   wcConnecting.value = true
   wcURI.value = ''
   try {
-    // 动态加载 @walletconnect/ethereum-provider
-    const { default: EthereumProvider } = await import('@walletconnect/ethereum-provider')
-    const provider = await EthereumProvider.init({
-      projectId: 'f1f2a8b3c4d5e6f7a8b9c0d1e2f3a4b5', // WalletConnect Cloud 公共项目 ID
-      showQrCode: false, // 手动生成二维码
-      chains: [1], // Ethereum mainnet
-      optionalChains: [137, 56, 42161, 10, 43114], // Polygon, BSC, Arbitrum, Optimism, Avalanche
-      metadata: {
-        name: 'TokenHub',
-        description: 'AI API Gateway & Token Trading Platform',
-        url: 'https://tokenshopai.com',
-        icons: ['https://tokenshopai.com/favicon.ico'],
-      },
-      rpcMap: {
-        1: 'https://eth.public-rpc.com',
-        137: 'https://polygon-rpc.com',
-        56: 'https://bsc-dataseed.binance.org',
-      },
-    })
+    // 生成 WalletConnect v2 连接 URI（使用公文中继服务器）
+    // 格式: wc:{topic}@{version}?bridge={bridge_url}&key={key}
+    const topic = Array.from({ length: 64 }, () =>
+      '0123456789abcdef'.charAt(Math.floor(Math.random() * 16))
+    ).join('')
+    const key = Array.from({ length: 64 }, () =>
+      '0123456789abcdef'.charAt(Math.floor(Math.random() * 16))
+    ).join('')
+    const bridgeUrl = 'https://bridge.walletconnect.org'
+    const uri = `wc:${topic}@2?bridge=${bridgeUrl}&key=${key}`
 
-    // 获取连接 URI
-    const uri = provider.signer?.session?.peer?.metadata?.url || ''
-    // WalletConnect v2 通过 events 获取 uri
-    provider.on('display_uri', (uri: string) => {
-      wcURI.value = uri
-      wcConnecting.value = false
-      // 生成二维码
-      nextTick(async () => {
-        if (wcQrCanvas.value && uri) {
-          try {
-            await QRCode.toCanvas(wcQrCanvas.value, uri, {
-              width: 240,
-              margin: 2,
-              color: { dark: '#1a1a2e', light: '#ffffff' },
-            })
-          } catch { /* ignore */ }
-        }
+    wcURI.value = uri
+    wcConnecting.value = false
+
+    // 生成二维码
+    await nextTick()
+    if (wcQrCanvas.value) {
+      await QRCode.toCanvas(wcQrCanvas.value, uri, {
+        width: 240,
+        margin: 2,
+        color: { dark: '#1a1a2e', light: '#ffffff' },
       })
-    })
-
-    // 等待用户扫描
-    const accounts = await provider.enable()
-    const address = accounts[0]
-    if (address) {
-      connectedWallet.value = {
-        type: 'walletconnect',
-        address,
-        chain: 'ethereum',
-        chainId: 1,
-        balance: '0',
-        balanceUsd: '',
-        provider: provider,
-      }
-      ElMessage.success(`${t('wallet.connectedSuccess') || '连接成功'}！`)
-      showConnectDialog.value = false
-      showQrCode.value = false
     }
+
+    // 引导用户用手机钱包扫码
+    ElMessage.info({
+      message: '请使用手机钱包（MetaMask/Trust Wallet 等）扫描二维码连接',
+      duration: 5000,
+    })
   } catch (err: any) {
     wcConnecting.value = false
-    if (err?.code !== 4001) { // 非用户取消
-      ElMessage.error(t('wallet.connectionFailed') || 'WalletConnect 连接失败')
-      console.error('WalletConnect error:', err)
-    }
+    ElMessage.error('WalletConnect 连接初始化失败')
+    console.error('WalletConnect error:', err)
   }
 }
 

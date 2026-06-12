@@ -212,8 +212,6 @@ export default {
     testConsole: 'Bảng kiểm tra', testPlaceholder: 'Tin nhắn kiểm tra...', sendTest: 'Gửi kiểm tra',
     testError: 'Kiểm tra thất bại',
   },
-  billing: {
-  },
   tenants: {
     detail: 'Chi tiết khách thuê', active: 'Hoạt động', suspended: 'Tạm ngưng', inactive: 'Không hoạt động',
     userCount: 'Người dùng', apiKeys: 'Khóa API', monthlyUsage: 'Sử dụng hàng tháng', plan: 'Gói',

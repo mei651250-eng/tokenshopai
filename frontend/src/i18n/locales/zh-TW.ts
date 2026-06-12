@@ -195,8 +195,6 @@ export default {
     rateLimitSaved: '限流配置已儲存', testConsole: '測試控制台', testPlaceholder: '輸入測試訊息...',
     sendTest: '發送測試', testError: '測試請求失敗，請檢查模型配置',
   },
-  billing: {
-  },
   tenants: {
     detail: '租戶詳情', active: '活躍', suspended: '已暫停', inactive: '未激活', userCount: '用戶數',
     apiKeys: 'API密鑰', monthlyUsage: '月度用量', plan: '方案', info: '基本信息', basicInfo: '基本信息',
