@@ -932,11 +932,6 @@ async function verifyAndBind() {
   }
 }
 
-// ===== i18n 快捷 =====
-function t(key: string) {
-  return (window as any).__vue_i18n__?.global?.t?.(key) || key
-}
-
 // ===== 生命周期 =====
 onMounted(() => {
   fetchWallets()
