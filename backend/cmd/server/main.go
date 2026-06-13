@@ -2379,13 +2379,13 @@ func main() {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "兑换码已过期"})
 				return
 			}
-			// 标记已使用
-			db.Model(&rc).Updates(map[string]interface{}{"status": "used", "used_by": userID, "used_at": time.Now()})
-			// 充值
+			// 先充值
 			if err := billingService.TopUp(c.Request.Context(), tenantID, userID, int64(rc.Amount*100)); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			// 充值成功后再标记已使用
+			db.Model(&rc).Updates(map[string]interface{}{"status": "used", "used_by": userID, "used_at": time.Now()})
 			c.JSON(http.StatusOK, gin.H{"message": "兑换成功", "amount": rc.Amount})
 		})
 

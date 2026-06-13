@@ -52,7 +52,7 @@
         <!-- Balance Badge -->
         <div class="flex items-center gap-1.5 px-3 py-1 bg-green-50 dark:bg-green-900/20 rounded-full">
           <el-icon :size="14" class="text-green-600"><Wallet /></el-icon>
-          <span class="text-sm font-medium text-green-700 dark:text-green-400">¥{{ balance / 100 }}</span>
+          <span class="text-sm font-medium text-green-700 dark:text-green-400">¥{{ (balance / 100).toFixed(2) }}</span>
         </div>
 
         <!-- Language Switcher -->

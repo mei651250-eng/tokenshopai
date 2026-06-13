@@ -3,6 +3,36 @@
     <div class="w-full max-w-md">
       <!-- Card -->
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 animate-fade-in-up">
+        <!-- Language Switcher -->
+        <div class="flex justify-end mb-2">
+          <el-dropdown trigger="click" @command="handleLocaleChange">
+            <button class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg transition-colors">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="zh-CN">简体中文</el-dropdown-item>
+                <el-dropdown-item command="en-US">English</el-dropdown-item>
+                <el-dropdown-item command="ja-JP">日本語</el-dropdown-item>
+                <el-dropdown-item command="ko-KR">한국어</el-dropdown-item>
+                <el-dropdown-item command="zh-TW">繁體中文</el-dropdown-item>
+                <el-dropdown-item command="fr-FR">Français</el-dropdown-item>
+                <el-dropdown-item command="de-DE">Deutsch</el-dropdown-item>
+                <el-dropdown-item command="es-ES">Español</el-dropdown-item>
+                <el-dropdown-item command="pt-BR">Português</el-dropdown-item>
+                <el-dropdown-item command="it-IT">Italiano</el-dropdown-item>
+                <el-dropdown-item command="ru-RU">Русский</el-dropdown-item>
+                <el-dropdown-item command="ar-SA">العربية</el-dropdown-item>
+                <el-dropdown-item command="hi-IN">हिन्दी</el-dropdown-item>
+                <el-dropdown-item command="id-ID">Bahasa Indonesia</el-dropdown-item>
+                <el-dropdown-item command="vi-VN">Tiếng Việt</el-dropdown-item>
+                <el-dropdown-item command="th-TH">ไทย</el-dropdown-item>
+                <el-dropdown-item command="tr-TR">Türkçe</el-dropdown-item>
+                <el-dropdown-item command="nl-NL">Nederlands</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
         <!-- Header -->
         <div class="text-center mb-8">
           <router-link to="/" class="inline-block">
@@ -96,13 +126,19 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const route = useRoute()
+const { locale } = useI18n()
 const userStore = useUserStore()
 const loading = ref(false)
+
+function handleLocaleChange(localeCode: string) {
+  locale.value = localeCode
+}
 
 const form = reactive({
   email: '',
