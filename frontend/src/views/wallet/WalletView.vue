@@ -411,7 +411,7 @@ const challengeText = ref('')
 const connectingType = ref('')
 const wcQrCanvas = ref<HTMLCanvasElement | null>(null)
 const wcURI = ref('')
-const showQrCode = ref(false)
+const showQrCode = ref(true)  // 默认显示 QR 连接区域
 const wcConnecting = ref(false)
 
 // 实时连接的钱包
