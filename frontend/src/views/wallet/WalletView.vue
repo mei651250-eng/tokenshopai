@@ -384,7 +384,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -921,6 +921,15 @@ onUnmounted(() => {
   if (prov?.removeListener) {
     prov.removeListener('accountsChanged', handleAccountsChanged)
     prov.removeListener('chainChanged', handleChainChanged)
+  }
+})
+
+// 连接钱包对话框打开时自动生成二维码
+watch(showConnectDialog, (val) => {
+  if (val) {
+    nextTick(() => {
+      startWalletConnect()
+    })
   }
 })
 </script>

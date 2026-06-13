@@ -42,7 +42,7 @@
           class="border-2 rounded-xl p-4 cursor-pointer transition-all flex items-center gap-3"
           :class="selectedChannel === ch.channel ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-indigo-300'"
           @click="selectedChannel = ch.channel">
-          <img :src="ch.icon" :alt="ch.name" class="w-10 h-10 object-contain" />
+          <span class="w-10 h-10 inline-flex items-center justify-center" v-html="ch.icon"></span>
           <div>
             <p class="font-medium text-gray-900 dark:text-white">{{ ch.name }}</p>
             <p class="text-xs text-gray-500">{{ ch.desc }}</p>
@@ -123,11 +123,19 @@ const packages = [
   { amount: 500, bonus: 60 },
 ]
 
+// 内联 SVG 图标（不依赖外部文件加载）
+const channelIcons: Record<string, string> = {
+  alipay: '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#1677FF"/><path d="M14 16h20v4H14zm0 8h20v4H14zm0 8h14v4H14z" fill="#fff" opacity="0.9"/><path d="M36 28c-2 0-4 2-4 4s2 4 4 4 4-2 4-4-2-4-4-4z" fill="#fff"/></svg>',
+  wechat_pay: '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#07C160"/><path d="M14 18c0-3.3 4.5-6 10-6s10 2.7 10 6-4.5 6-10 6c-1.8 0-3.5-.3-5-.9l-3.5 1.5 1-2.8C15.5 20.5 14 19.3 14 18z" fill="#fff"/><circle cx="20" cy="18" r="1.5" fill="#07C160"/><circle cx="28" cy="18" r="1.5" fill="#07C160"/></svg>',
+  stripe: '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#635BFF"/><path d="M18 20h12v2H18zm0 4h8v2H18zm0 4h10v2H18z" fill="#fff"/><circle cx="34" cy="24" r="4" fill="#fff"/></svg>',
+  crypto: '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#F7931A"/><circle cx="24" cy="24" r="10" fill="#fff"/><path d="M24 14v20M18 20h12M18 28h12" stroke="#F7931A" stroke-width="2" stroke-linecap="round"/></svg>',
+}
+
 const paymentChannels = [
-  { channel: 'alipay', name: '支付宝', desc: '即时到账', icon: '/icons/alipay.svg' },
-  { channel: 'wechat_pay', name: '微信支付', desc: '扫码支付', icon: '/icons/wechat_pay.svg' },
-  { channel: 'stripe', name: 'Stripe', desc: '国际信用卡', icon: '/icons/stripe.svg' },
-  { channel: 'crypto', name: 'USDT', desc: '加密货币', icon: '/icons/crypto.svg' },
+  { channel: 'alipay', name: '支付宝', desc: '即时到账', icon: channelIcons.alipay },
+  { channel: 'wechat_pay', name: '微信支付', desc: '扫码支付', icon: channelIcons.wechat_pay },
+  { channel: 'stripe', name: 'Stripe', desc: '国际信用卡', icon: channelIcons.stripe },
+  { channel: 'crypto', name: 'USDT', desc: '加密货币', icon: channelIcons.crypto },
 ]
 
 function selectPackage(pkg: { amount: number }) {
