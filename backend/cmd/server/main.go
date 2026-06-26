@@ -30,6 +30,7 @@ import (
 	"github.com/tokenhub/backend/internal/common/middleware"
 	"github.com/tokenhub/backend/internal/config"
 	"github.com/tokenhub/backend/internal/distribution"
+	"github.com/tokenhub/backend/internal/subscription"
 	"github.com/tokenhub/backend/internal/finance"
 	"github.com/tokenhub/backend/internal/gateway"
 	"github.com/tokenhub/backend/internal/gateway/lb"
@@ -95,6 +96,12 @@ func main() {
 
 	// 3.2 初始化超级管理员
 	initSuperAdmin(db, logger)
+
+	// 3.3 初始化订阅服务
+	subSvc := subscription.NewSubscriptionService(logger, db, nil)
+	if err := subSvc.SeedDefaultPlans(context.Background()); err != nil {
+		logger.Warn("Failed to seed default plans", zap.Error(err))
+	}
 
 	// 4. 初始化Redis
 	rdb := redis.NewClient(&redis.Options{
@@ -166,6 +173,9 @@ func main() {
 
 	// 分销服务
 	distService := distribution.NewDistributionService(logger, rdb)
+
+	// 订阅服务
+	subService := subscription.NewSubscriptionService(logger, db, rdb)
 
 	// Token缓存
 	tokenCache := tokencache.NewTokenCache(logger, rdb, tokencache.CacheConfig{
@@ -1173,6 +1183,67 @@ func main() {
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{"total": total, "period": req.Period})
+		})
+
+		// ==================== 订阅管理 ====================
+		// 获取所有计划（含禁用）
+		admin.GET("/subscription/plans", func(c *gin.Context) {
+			planType := c.DefaultQuery("type", "all")
+			plans, err := subService.ListPlans(c.Request.Context(), planType)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": plans})
+		})
+
+		// 创建计划
+		admin.POST("/subscription/plans", func(c *gin.Context) {
+			var plan subscription.SubscriptionPlan
+			if err := c.ShouldBindJSON(&plan); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := subService.CreatePlan(c.Request.Context(), &plan); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "plan created", "plan": plan})
+		})
+
+		// 更新计划
+		admin.PUT("/subscription/plans/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			var updates map[string]interface{}
+			if err := c.ShouldBindJSON(&updates); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := subService.UpdatePlan(c.Request.Context(), id, updates); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "plan updated"})
+		})
+
+		// 删除计划
+		admin.DELETE("/subscription/plans/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			if err := subService.DeletePlan(c.Request.Context(), id); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "plan deleted"})
+		})
+
+		// 订阅统计
+		admin.GET("/subscription/stats", func(c *gin.Context) {
+			stats, err := subService.GetSubscriptionStats(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": stats})
 		})
 
 		// ==================== 密钥保险库 ====================
@@ -3075,6 +3146,72 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"message": "兑换成功", "amount": code.Amount})
 		})
 
+		// 订阅管理
+		userGroup.GET("/subscription", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			sub, plan, err := subService.GetUserSubscriptionPlan(c.Request.Context(), userID)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"data": nil, "message": "no active subscription"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": gin.H{
+				"subscription": sub,
+				"plan":         plan,
+			}})
+		})
+
+		// 可用计划列表（用户视角）
+		userGroup.GET("/subscription/plans", func(c *gin.Context) {
+			planType := c.DefaultQuery("type", "all")
+			plans, err := subService.ListPlans(c.Request.Context(), planType)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": plans})
+		})
+
+		// 订阅计划
+		userGroup.POST("/subscription/subscribe", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			var req struct {
+				PlanID string `json:"plan_id" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			sub, err := subService.Subscribe(c.Request.Context(), userID, tenantID, req.PlanID)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "subscribed successfully", "data": sub})
+		})
+
+		// 取消订阅
+		userGroup.POST("/subscription/cancel", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			if err := subService.CancelSubscription(c.Request.Context(), userID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "subscription cancelled"})
+		})
+
+		// 订阅历史
+		userGroup.GET("/subscription/history", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			limit := 20
+			subs, err := subService.ListUserSubscriptions(c.Request.Context(), userID, limit)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"data": subs})
+		})
+
 		// 用户个人资料
 		userGroup.GET("/profile", func(c *gin.Context) {
 			userID := c.GetString("user_id")
@@ -3641,6 +3778,8 @@ func autoMigrate(db *gorm.DB, logger *zap.Logger) {
 		&OnboardingProgress{},
 		&channel.Channel{},
 		&tokencore.AccessToken{},
+		&subscription.SubscriptionPlan{},
+		&subscription.UserSubscription{},
 	); err != nil {
 		logger.Fatal("Failed to auto migrate database", zap.Error(err))
 	}

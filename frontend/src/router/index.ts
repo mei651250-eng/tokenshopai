@@ -129,6 +129,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/profile/ProfileView.vue'),
       },
       {
+        path: '/subscription',
+        name: 'Subscription',
+        component: () => import('@/views/subscription/SubscriptionView.vue'),
+      },
+      {
         path: '/notifications',
         name: 'Notifications',
         component: () => import('@/views/notifications/NotificationCenterView.vue'),
@@ -265,6 +270,11 @@ const routes: RouteRecordRaw[] = [
         path: 'user-groups',
         name: 'UserGroups',
         component: () => import('@/views/groups/UserGroupView.vue'),
+      },
+      {
+        path: 'subscription-plans',
+        name: 'SubscriptionPlans',
+        component: () => import('@/views/admin/SubscriptionPlansView.vue'),
       },
     ],
   },
