@@ -18,9 +18,23 @@ import thTH from './locales/th'
 import trTR from './locales/tr'
 import nlNL from './locales/nl'
 
+// 根据浏览器语言或存储的语言设置默认语言
+function getDefaultLocale(): string {
+  const saved = localStorage.getItem('locale')
+  if (saved) return saved
+  const navLang = navigator.language || (navigator as any).userLanguage || ''
+  if (navLang.startsWith('zh')) return 'zh-CN'
+  if (navLang.startsWith('en')) return 'en-US'
+  if (navLang.startsWith('ja')) return 'ja-JP'
+  if (navLang.startsWith('ko')) return 'ko-KR'
+  if (navLang.startsWith('fr')) return 'fr-FR'
+  if (navLang.startsWith('de')) return 'de-DE'
+  return 'en-US'
+}
+
 const i18n = createI18n({
   legacy: false,
-  locale: localStorage.getItem('locale') || 'zh-CN',
+  locale: getDefaultLocale(),
   fallbackLocale: 'en-US',
   messages: {
     'zh-CN': zhCN,

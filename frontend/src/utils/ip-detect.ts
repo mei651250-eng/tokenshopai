@@ -145,11 +145,11 @@ export async function detectIP(): Promise<IPInfo> {
  * 根据国家代码获取推荐的登录方式
  */
 export function getRecommendedLoginMethods(countryCode: string): LoginMethods {
-  // 中国大陆 - 支付宝/微信/手机号为主
+  // 中国大陆 - 仅显示国内登录方式（支付宝/微信/手机号/邮箱）
   if (countryCode === 'CN') {
     return {
       primary: ['phone', 'alipay', 'wechat'],
-      secondary: ['email', 'github', 'web3'],
+      secondary: [], // 国内不显示任何国外登录方式
       recommended: 'phone',
     }
   }
@@ -215,19 +215,20 @@ export function getLoginMethodInfo(method: LoginMethod): {
   icon: string
   color: string
   bgColor: string
+  iconType: 'svg' | 'emoji'
 } {
-  const info: Record<LoginMethod, { name: string; icon: string; color: string; bgColor: string }> = {
-    phone: { name: '手机号', icon: '📱', color: '#10B981', bgColor: '#ECFDF5' },
-    email: { name: '邮箱', icon: '📧', color: '#3B82F6', bgColor: '#EFF6FF' },
-    alipay: { name: '支付宝', icon: '💳', color: '#1677FF', bgColor: '#E6F4FF' },
-    wechat: { name: '微信', icon: '💚', color: '#07C160', bgColor: '#E8F8EE' },
-    google: { name: 'Google', icon: '🔴', color: '#EA4335', bgColor: '#FEE2E2' },
-    github: { name: 'GitHub', icon: '🐙', color: '#24292F', bgColor: '#F3F4F6' },
-    apple: { name: 'Apple', icon: '🍎', color: '#000000', bgColor: '#F3F4F6' },
-    facebook: { name: 'Facebook', icon: '📘', color: '#1877F2', bgColor: '#E0E7FF' },
-    twitter: { name: 'Twitter', icon: '🐦', color: '#1DA1F2', bgColor: '#E0F2FE' },
-    microsoft: { name: 'Microsoft', icon: '🪟', color: '#00A4EF', bgColor: '#E0F2FE' },
-    web3: { name: 'Web3钱包', icon: '🦊', color: '#F6851B', bgColor: '#FEF3C7' },
+  const info: Record<LoginMethod, { name: string; icon: string; color: string; bgColor: string; iconType: 'svg' | 'emoji' }> = {
+    phone:    { name: '手机号',   icon: 'phone',     color: '#10B981', bgColor: '#ECFDF5', iconType: 'svg' },
+    email:    { name: '邮箱',     icon: 'email',     color: '#3B82F6', bgColor: '#EFF6FF', iconType: 'svg' },
+    alipay:   { name: '支付宝',   icon: 'alipay',    color: '#1677FF', bgColor: '#E6F4FF', iconType: 'svg' },
+    wechat:   { name: '微信',     icon: 'wechat',    color: '#07C160', bgColor: '#E8F8EE', iconType: 'svg' },
+    google:   { name: 'Google',   icon: 'google',    color: '#DB4437', bgColor: '#FEE2E2', iconType: 'svg' },
+    github:   { name: 'GitHub',   icon: 'github',    color: '#24292F', bgColor: '#F3F4F6', iconType: 'svg' },
+    apple:    { name: 'Apple',    icon: 'apple',     color: '#000000', bgColor: '#F3F4F6', iconType: 'svg' },
+    facebook: { name: 'Facebook', icon: 'facebook',  color: '#1877F2', bgColor: '#E0E7FF', iconType: 'svg' },
+    twitter:  { name: 'Twitter',  icon: 'twitter',   color: '#1DA1F2', bgColor: '#E0F2FE', iconType: 'svg' },
+    microsoft:{ name: 'Microsoft',icon: 'microsoft', color: '#00A4EF', bgColor: '#E0F2FE', iconType: 'svg' },
+    web3:     { name: 'Web3钱包', icon: 'wallet',    color: '#F6851B', bgColor: '#FEF3C7', iconType: 'svg' },
   }
   
   return info[method] || info.email

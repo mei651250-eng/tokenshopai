@@ -3556,7 +3556,7 @@ func main() {
 			handleLogin(c, jwtManager, db, logger)
 		})
 		authGroup.POST("/register", func(c *gin.Context) {
-			handleRegister(c, db, logger)
+			handleRegister(c, db, subService, logger)
 		})
 
 		// OAuth 登录（GitHub / Google）
@@ -3564,7 +3564,7 @@ func main() {
 			handleOAuthRedirect(c, cfg, logger)
 		})
 		authGroup.GET("/oauth/:provider/callback", func(c *gin.Context) {
-			handleOAuthCallback(c, jwtManager, db, logger, cfg)
+			handleOAuthCallback(c, jwtManager, db, subService, logger, cfg)
 		})
 
 		// 验证码登录/注册
@@ -4332,7 +4332,7 @@ func handleLogin(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, logge
 	})
 }
 
-func handleRegister(c *gin.Context, db *gorm.DB, logger *zap.Logger) {
+func handleRegister(c *gin.Context, db *gorm.DB, subSvc *subscription.SubscriptionService, logger *zap.Logger) {
 	var req struct {
 		Username    string `json:"username"`
 		Email       string `json:"email" binding:"required,email"`
@@ -4410,6 +4410,18 @@ func handleRegister(c *gin.Context, db *gorm.DB, logger *zap.Logger) {
 				CreatedAt:    time.Now(),
 			})
 			logger.Info("referral recorded", zap.String("inviter", inviter.ID), zap.String("invitee", user.ID))
+		}
+	}
+
+	// 自动开通免费试用
+	if subSvc != nil {
+		trialPlan, err := subSvc.GetDefaultPlan(c.Request.Context(), subscription.PlanTrial)
+		if err == nil && trialPlan != nil {
+			if _, err := subSvc.Subscribe(c.Request.Context(), user.ID, user.TenantID, trialPlan.ID); err != nil {
+				logger.Warn("auto trial subscription failed", zap.String("user_id", user.ID), zap.Error(err))
+			} else {
+				logger.Info("auto trial assigned", zap.String("user_id", user.ID))
+			}
 		}
 	}
 
@@ -4692,7 +4704,7 @@ func handleOAuthRedirect(c *gin.Context, cfg *config.Config, logger *zap.Logger)
 }
 
 // handleOAuthCallback 处理 OAuth 回调
-func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, logger *zap.Logger, cfg *config.Config) {
+func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, subSvc *subscription.SubscriptionService, logger *zap.Logger, cfg *config.Config) {
 	provider := c.Param("provider")
 	code := c.Query("code")
 	state := c.Query("state")
@@ -4764,6 +4776,13 @@ func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.D
 			if err := db.Create(&user).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
 				return
+			}
+			// 自动开通免费试用
+			if subSvc != nil {
+				trialPlan, err := subSvc.GetDefaultPlan(c.Request.Context(), subscription.PlanTrial)
+				if err == nil && trialPlan != nil {
+					subSvc.Subscribe(c.Request.Context(), user.ID, user.TenantID, trialPlan.ID)
+				}
 			}
 		}
 
