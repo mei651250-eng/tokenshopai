@@ -16,6 +16,12 @@ const (
 	RoleDeveloper    Role = "developer"      // 开发者
 	RoleViewer       Role = "viewer"         // 只读观察者
 	RoleAPIConsumer  Role = "api_consumer"  // API消费者（仅调用API）
+
+	// 分销商角色
+	RoleAgent     Role = "agent"      // 代理商（最高级分销）
+	RoleReferrer  Role = "referrer"   // 推荐人
+	RoleReseller  Role = "reseller"   // 经销商
+	RoleAffiliate Role = "affiliate"  // 联盟推广
 )
 
 // Permission 权限
@@ -75,6 +81,14 @@ const (
 	// 分销
 	PermDistView   Permission = "distribution:view"
 	PermDistManage Permission = "distribution:manage"
+
+	// 分销商自助权限
+	PermDistDashboard  Permission = "distributor:dashboard"
+	PermDistLinks      Permission = "distributor:links"
+	PermDistReferrals  Permission = "distributor:referrals"
+	PermDistCommissions Permission = "distributor:commissions"
+	PermDistWithdraw   Permission = "distributor:withdraw"
+	PermDistMaterials  Permission = "distributor:materials"
 )
 
 // RolePermissions 角色权限映射
@@ -128,6 +142,32 @@ var RolePermissions = map[Role][]Permission{
 	},
 	RoleAPIConsumer: {
 		PermModelRoute,
+	},
+
+	// 分销商角色权限
+	RoleAgent: {
+		PermDistDashboard, PermDistLinks, PermDistReferrals,
+		PermDistCommissions, PermDistWithdraw, PermDistMaterials,
+		PermModelList, PermModelRoute,
+		PermBillingView,
+		PermMonitorView,
+	},
+	RoleReferrer: {
+		PermDistDashboard, PermDistLinks, PermDistReferrals,
+		PermDistCommissions,
+		PermModelList, PermModelRoute,
+		PermBillingView,
+	},
+	RoleReseller: {
+		PermDistDashboard, PermDistLinks, PermDistReferrals,
+		PermDistCommissions, PermDistWithdraw,
+		PermModelList, PermModelRoute,
+		PermBillingView,
+	},
+	RoleAffiliate: {
+		PermDistDashboard, PermDistLinks, PermDistCommissions,
+		PermModelList, PermModelRoute,
+		PermBillingView,
 	},
 }
 

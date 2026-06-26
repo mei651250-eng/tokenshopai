@@ -268,6 +268,50 @@ const routes: RouteRecordRaw[] = [
       },
     ],
   },
+
+  // ========== 分销商端（DistributorLayout）==========
+  {
+    path: '/distributor',
+    component: () => import('@/components/layout/DistributorLayout.vue'),
+    meta: { requiresAuth: true, roles: ['agent', 'referrer', 'reseller', 'affiliate'] },
+    children: [
+      {
+        path: '',
+        name: 'DistributorDashboard',
+        component: () => import('@/views/distributor/DistributorDashboardView.vue'),
+      },
+      {
+        path: 'links',
+        name: 'DistributorLinks',
+        component: () => import('@/views/distributor/DistributorLinksView.vue'),
+      },
+      {
+        path: 'referrals',
+        name: 'DistributorReferrals',
+        component: () => import('@/views/distributor/DistributorReferralsView.vue'),
+      },
+      {
+        path: 'commissions',
+        name: 'DistributorCommissions',
+        component: () => import('@/views/distributor/DistributorCommissionsView.vue'),
+      },
+      {
+        path: 'withdraw',
+        name: 'DistributorWithdraw',
+        component: () => import('@/views/distributor/DistributorWithdrawView.vue'),
+      },
+      {
+        path: 'materials',
+        name: 'DistributorMaterials',
+        component: () => import('@/views/distributor/DistributorMaterialsView.vue'),
+      },
+      {
+        path: 'profile',
+        name: 'DistributorProfile',
+        component: () => import('@/views/profile/ProfileView.vue'),
+      },
+    ],
+  },
   {
     path: '/monitor/screen',
     name: 'MonitorScreen',
@@ -301,6 +345,11 @@ const rolePermissions: Record<string, string[]> = {
   developer: ['model:list', 'model:route', 'apikey:list', 'apikey:create', 'billing:view', 'monitor:view'],
   viewer: ['model:list', 'billing:view', 'monitor:view', 'report:view'],
   api_consumer: ['model:route'],
+  // 分销商角色权限
+  agent: ['distributor:dashboard', 'distributor:links', 'distributor:referrals', 'distributor:commissions', 'distributor:withdraw', 'distributor:materials'],
+  referrer: ['distributor:dashboard', 'distributor:links', 'distributor:referrals', 'distributor:commissions'],
+  reseller: ['distributor:dashboard', 'distributor:links', 'distributor:referrals', 'distributor:commissions', 'distributor:withdraw'],
+  affiliate: ['distributor:dashboard', 'distributor:links', 'distributor:commissions'],
 }
 
 function hasPermission(role: string, permission?: string): boolean {
@@ -333,7 +382,14 @@ router.beforeEach((to, _from, next) => {
       const payload = JSON.parse(atob(token.split('.')[1]))
       const userRole = payload.role || ''
       const isAdmin = userRole === 'super_admin' || userRole === 'tenant_admin'
-      window.location.hash = isAdmin ? '#/admin/dashboard' : '#/home'
+      const isDistributor = ['agent', 'referrer', 'reseller', 'affiliate'].includes(userRole)
+      if (isAdmin) {
+        window.location.hash = '#/admin/dashboard'
+      } else if (isDistributor) {
+        window.location.hash = '#/distributor'
+      } else {
+        window.location.hash = '#/home'
+      }
       return
     }
   }
@@ -350,7 +406,14 @@ router.beforeEach((to, _from, next) => {
   // 已登录访问着陆页或登录页，根据角色重定向
   if ((to.name === 'Landing' || to.name === 'Login') && token) {
     const isAdmin = role === 'super_admin' || role === 'tenant_admin'
-    next({ name: isAdmin ? 'Dashboard' : 'UserHome' })
+    const isDistributor = ['agent', 'referrer', 'reseller', 'affiliate'].includes(role)
+    if (isAdmin) {
+      next({ name: 'Dashboard' })
+    } else if (isDistributor) {
+      next({ name: 'DistributorDashboard' })
+    } else {
+      next({ name: 'UserHome' })
+    }
     return
   }
 

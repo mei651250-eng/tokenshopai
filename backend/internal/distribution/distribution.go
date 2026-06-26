@@ -3,6 +3,8 @@ package distribution
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -46,14 +48,67 @@ type Distributor struct {
 	CommissionConfig string        `json:"commission_config,omitempty"` // 阶梯配置JSON
 
 	// 统计
-	TotalReferred   int     `json:"total_referred"`   // 推荐总人数
-	TotalRevenue    int64   `json:"total_revenue"`     // 带来的总营收（分）
-	TotalCommission int64   `json:"total_commission"`  // 累计佣金（分）
-	PendingCommission int64  `json:"pending_commission"` // 待结算佣金（分）
-	WithdrawnCommission int64 `json:"withdrawn_commission"` // 已提现佣金
+	TotalReferred       int     `json:"total_referred"`        // 推荐总人数
+	TotalRevenue        int64   `json:"total_revenue"`         // 带来的总营收（分）
+	TotalCommission     int64   `json:"total_commission"`      // 累计佣金（分）
+	PendingCommission   int64   `json:"pending_commission"`    // 待结算佣金（分）
+	WithdrawnCommission int64   `json:"withdrawn_commission"`  // 已提现佣金
+	NewReferralsThisMonth int   `json:"new_referrals_month"`   // 本月新增推荐
+	TotalClicks         int     `json:"total_clicks"`          // 总点击数
+	ConversionRate      float64 `json:"conversion_rate"`       // 转化率
 
 	CreatedAt int64 `json:"created_at"`
 	UpdatedAt int64 `json:"updated_at"`
+}
+
+// CustomLink 自定义推广链接
+type CustomLink struct {
+	ID            string `json:"id"`
+	DistributorID string `json:"distributor_id"`
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	Clicks        int    `json:"clicks"`
+	Registrations int    `json:"registrations"`
+	CreatedAt     int64  `json:"created_at"`
+}
+
+// WithdrawRecord 提现记录
+type WithdrawRecord struct {
+	ID            string  `json:"id"`
+	UserID        string  `json:"user_id"`
+	Amount        float64 `json:"amount"`
+	Method        string  `json:"method"`
+	Account       string  `json:"account"`
+	RealName      string  `json:"real_name"`
+	Status        string  `json:"status"` // pending, processing, completed, failed, cancelled
+	Note          string  `json:"note"`
+	RejectedReason string `json:"rejected_reason,omitempty"`
+	CreatedAt     int64   `json:"created_at"`
+	UpdatedAt     int64   `json:"updated_at"`
+}
+
+// ReferralUser 推荐用户信息
+type ReferralUser struct {
+	ID           string  `json:"id"`
+	Username     string  `json:"username"`
+	Email        string  `json:"email"`
+	RegisteredAt int64   `json:"registered_at"`
+	LastActive   int64   `json:"last_active"`
+	TotalSpent   float64 `json:"total_spent"`
+	Contribution float64 `json:"contribution"`
+	Status       string  `json:"status"`
+}
+
+// PromotionalMaterial 推广素材
+type PromotionalMaterial struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Type        string `json:"type"` // image, video, copy
+	Category    string `json:"category"`
+	URL         string `json:"url"`
+	Size        string `json:"size"`
+	Downloads   int    `json:"downloads"`
 }
 
 // CommissionRecord 佣金记录
@@ -373,6 +428,323 @@ func (s *DistributionService) ListCommissionRecords(ctx context.Context, distID 
 		})
 	}
 	return records, nil
+}
+
+// ==================== 分销商查询 ====================
+
+// GetDistributorByUserID 通过用户ID获取分销商ID列表
+func (s *DistributionService) GetDistributorByUserID(ctx context.Context, userID string) ([]string, error) {
+	setKey := fmt.Sprintf("distributor:user:%s", userID)
+	ids, err := s.rdb.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// GetDistributorByUserIDCtx 从上下文获取用户ID对应的分销商
+func (s *DistributionService) GetDistributorByUserIDCtx(ctx context.Context, userID string) (*Distributor, error) {
+	ids, err := s.GetDistributorByUserID(ctx, userID)
+	if err != nil || len(ids) == 0 {
+		return nil, fmt.Errorf("distributor not found for user: %s", userID)
+	}
+	return s.GetDistributor(ctx, ids[0])
+}
+
+// ==================== 推荐用户管理 ====================
+
+// ListReferrals 列出推荐用户
+func (s *DistributionService) ListReferrals(ctx context.Context, distID string, offset, limit int64) []ReferralUser {
+	zKey := fmt.Sprintf("referral:distributor:%s", distID)
+	userIDs, err := s.rdb.ZRevRange(ctx, zKey, offset, offset+limit-1).Result()
+	if err != nil {
+		return nil
+	}
+
+	var users []ReferralUser
+	for _, uid := range userIDs {
+		u := s.getReferralUserInfo(ctx, uid, distID)
+		if u != nil {
+			users = append(users, *u)
+		}
+	}
+	return users
+}
+
+// ListReferralsWithCount 列出推荐用户并返回总数
+func (s *DistributionService) ListReferralsWithCount(ctx context.Context, distID string, offset, limit int64) ([]ReferralUser, int64) {
+	zKey := fmt.Sprintf("referral:distributor:%s", distID)
+	total, err := s.rdb.ZCard(ctx, zKey).Result()
+	if err != nil {
+		total = 0
+	}
+
+	userIDs, err := s.rdb.ZRevRange(ctx, zKey, offset, offset+limit-1).Result()
+	if err != nil {
+		return nil, total
+	}
+
+	var users []ReferralUser
+	for _, uid := range userIDs {
+		u := s.getReferralUserInfo(ctx, uid, distID)
+		if u != nil {
+			users = append(users, *u)
+		}
+	}
+	return users, total
+}
+
+func (s *DistributionService) getReferralUserInfo(ctx context.Context, userID, distID string) *ReferralUser {
+	// 从 referral:user:{userID} 获取基本信息
+	userData, err := s.rdb.HGetAll(ctx, fmt.Sprintf("referral:userdata:%s", userID)).Result()
+	if err != nil || len(userData) == 0 {
+		return &ReferralUser{
+			ID:           userID,
+			Username:     fmt.Sprintf("user_%s", userID[:8]),
+			Email:        fmt.Sprintf("user***@mail.com"),
+			RegisteredAt: 0,
+			LastActive:   0,
+			TotalSpent:   0,
+			Contribution: 0,
+			Status:       "active",
+		}
+	}
+
+	totalSpent, _ := strconv.ParseFloat(userData["total_spent"], 64)
+	contribution, _ := strconv.ParseFloat(userData["contribution"], 64)
+	registeredAt, _ := strconv.ParseInt(userData["registered_at"], 10, 64)
+	lastActive, _ := strconv.ParseInt(userData["last_active"], 10, 64)
+
+	return &ReferralUser{
+		ID:           userID,
+		Username:     userData["username"],
+		Email:        userData["email"],
+		RegisteredAt: registeredAt,
+		LastActive:   lastActive,
+		TotalSpent:   totalSpent,
+		Contribution: contribution,
+		Status:       userData["status"],
+	}
+}
+
+// ==================== 自定义链接管理 ====================
+
+// ListCustomLinks 列出自定义链接
+func (s *DistributionService) ListCustomLinks(ctx context.Context, distID string) []CustomLink {
+	setKey := fmt.Sprintf("customlink:distributor:%s", distID)
+	linkIDs, err := s.rdb.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return nil
+	}
+
+	var links []CustomLink
+	for _, id := range linkIDs {
+		data, err := s.rdb.HGetAll(ctx, fmt.Sprintf("customlink:%s", id)).Result()
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		links = append(links, CustomLink{
+			ID:            data["id"],
+			DistributorID: data["distributor_id"],
+			Name:          data["name"],
+			URL:           data["url"],
+			Clicks:        parseInt(data["clicks"]),
+			Registrations: parseInt(data["registrations"]),
+			CreatedAt:     parseInt64(data["created_at"]),
+		})
+	}
+	return links
+}
+
+// CreateCustomLink 创建自定义链接
+func (s *DistributionService) CreateCustomLink(ctx context.Context, userID, name, targetPage, note string) (*CustomLink, error) {
+	dist, err := s.GetDistributorByUserIDCtx(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	linkID := uuid.New().String()
+	now := time.Now().Unix()
+	url := fmt.Sprintf("https://tokenshopai.com/register?ref=%s&src=%s", dist.ReferralCode, strings.ReplaceAll(strings.ToLower(name), " ", "_"))
+
+	linkKey := fmt.Sprintf("customlink:%s", linkID)
+	s.rdb.HSet(ctx, linkKey, map[string]interface{}{
+		"id":             linkID,
+		"distributor_id": dist.ID,
+		"name":           name,
+		"url":            url,
+		"clicks":         0,
+		"registrations":  0,
+		"created_at":     now,
+	})
+	s.rdb.SAdd(ctx, fmt.Sprintf("customlink:distributor:%s", dist.ID), linkID)
+
+	return &CustomLink{
+		ID:            linkID,
+		DistributorID: dist.ID,
+		Name:          name,
+		URL:           url,
+		Clicks:        0,
+		Registrations: 0,
+		CreatedAt:     now,
+	}, nil
+}
+
+// DeleteCustomLink 删除自定义链接
+func (s *DistributionService) DeleteCustomLink(ctx context.Context, userID, linkID string) error {
+	dist, err := s.GetDistributorByUserIDCtx(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// 验证链接属于该分销商
+	data, err := s.rdb.HGetAll(ctx, fmt.Sprintf("customlink:%s", linkID)).Result()
+	if err != nil || data["distributor_id"] != dist.ID {
+		return fmt.Errorf("link not found or unauthorized")
+	}
+
+	s.rdb.Del(ctx, fmt.Sprintf("customlink:%s", linkID))
+	s.rdb.SRem(ctx, fmt.Sprintf("customlink:distributor:%s", dist.ID), linkID)
+	return nil
+}
+
+// ==================== 提现管理 ====================
+
+// ListWithdrawRecords 列出提现记录
+func (s *DistributionService) ListWithdrawRecords(ctx context.Context, userID string, offset, limit int64) []WithdrawRecord {
+	zKey := fmt.Sprintf("withdraw:user:%s", userID)
+	recordIDs, err := s.rdb.ZRevRange(ctx, zKey, offset, offset+limit-1).Result()
+	if err != nil {
+		return nil
+	}
+
+	var records []WithdrawRecord
+	for _, id := range recordIDs {
+		data, err := s.rdb.HGetAll(ctx, fmt.Sprintf("withdraw:%s", id)).Result()
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		amount, _ := strconv.ParseFloat(data["amount"], 64)
+		records = append(records, WithdrawRecord{
+			ID:        data["id"],
+			UserID:    data["user_id"],
+			Amount:    amount,
+			Method:    data["method"],
+			Account:   data["account"],
+			RealName:  data["real_name"],
+			Status:    data["status"],
+			Note:      data["note"],
+			CreatedAt: parseInt64(data["created_at"]),
+			UpdatedAt: parseInt64(data["updated_at"]),
+		})
+	}
+	return records
+}
+
+// RequestWithdraw 申请提现
+func (s *DistributionService) RequestWithdraw(ctx context.Context, userID string, amount float64, method, account, realName, note string) error {
+	if amount < 10 {
+		return fmt.Errorf("minimum withdraw amount is 10")
+	}
+
+	recordID := uuid.New().String()
+	now := time.Now().Unix()
+
+	recordKey := fmt.Sprintf("withdraw:%s", recordID)
+	s.rdb.HSet(ctx, recordKey, map[string]interface{}{
+		"id":         recordID,
+		"user_id":    userID,
+		"amount":     amount,
+		"method":     method,
+		"account":    account,
+		"real_name":  realName,
+		"status":     "pending",
+		"note":       note,
+		"created_at": now,
+		"updated_at": now,
+	})
+	s.rdb.ZAdd(ctx, fmt.Sprintf("withdraw:user:%s", userID), &redis.Z{
+		Score:  float64(now),
+		Member: recordID,
+	})
+	s.rdb.SAdd(ctx, "withdraw:pending", recordID)
+
+	s.logger.Info("withdraw request created",
+		zap.String("user_id", userID),
+		zap.Float64("amount", amount),
+		zap.String("method", method),
+	)
+	return nil
+}
+
+// CancelWithdraw 取消提现
+func (s *DistributionService) CancelWithdraw(ctx context.Context, userID, recordID string) error {
+	recordKey := fmt.Sprintf("withdraw:%s", recordID)
+	data, err := s.rdb.HGetAll(ctx, recordKey).Result()
+	if err != nil || len(data) == 0 {
+		return fmt.Errorf("record not found")
+	}
+	if data["user_id"] != userID {
+		return fmt.Errorf("unauthorized")
+	}
+	if data["status"] != "pending" {
+		return fmt.Errorf("only pending withdrawals can be cancelled")
+	}
+
+	now := time.Now().Unix()
+	s.rdb.HSet(ctx, recordKey, map[string]interface{}{
+		"status":     "cancelled",
+		"updated_at": now,
+	})
+	s.rdb.SRem(ctx, "withdraw:pending", recordID)
+
+	return nil
+}
+
+// ==================== 推广素材 ====================
+
+// ListPromotionalMaterials 列出推广素材
+func (s *DistributionService) ListPromotionalMaterials(ctx context.Context, category string) []PromotionalMaterial {
+	var allMaterials = []PromotionalMaterial{
+		{ID: "1", Title: "产品介绍横幅", Description: "适合网站顶部展示", Type: "image", Category: "banner", URL: "https://via.placeholder.com/1920x600/6366f1/ffffff?text=Product+Banner", Size: "1920x600", Downloads: 256},
+		{ID: "2", Title: "促销活动海报", Description: "适合社交媒体分享", Type: "image", Category: "poster", URL: "https://via.placeholder.com/1080x1920/ec4899/ffffff?text=Promotion+Poster", Size: "1080x1920", Downloads: 189},
+		{ID: "3", Title: "产品演示视频", Description: "展示产品核心功能", Type: "video", Category: "video", URL: "", Size: "MP4 50MB", Downloads: 123},
+		{ID: "4", Title: "用户案例海报", Description: "真实用户使用案例", Type: "image", Category: "poster", URL: "https://via.placeholder.com/1080x1920/8b5cf6/ffffff?text=Case+Study", Size: "1080x1920", Downloads: 145},
+		{ID: "5", Title: "功能介绍视频", Description: "详细功能使用教程", Type: "video", Category: "video", URL: "", Size: "MP4 80MB", Downloads: 98},
+		{ID: "6", Title: "品牌宣传横幅", Description: "品牌形象展示", Type: "image", Category: "banner", URL: "https://via.placeholder.com/1920x600/10b981/ffffff?text=Brand+Banner", Size: "1920x600", Downloads: 167},
+	}
+
+	if category == "all" || category == "" {
+		return allMaterials
+	}
+
+	var filtered []PromotionalMaterial
+	for _, m := range allMaterials {
+		if m.Category == category {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+// ==================== 分销商资料更新 ====================
+
+// UpdateDistributorProfile 更新分销商资料
+func (s *DistributionService) UpdateDistributorProfile(ctx context.Context, userID string, commissionRate float64) error {
+	dist, err := s.GetDistributorByUserIDCtx(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	if commissionRate > 0 {
+		if commissionRate > 1.0 {
+			commissionRate = commissionRate / 100
+		}
+		distKey := fmt.Sprintf("distributor:%s", dist.ID)
+		s.rdb.HSet(ctx, distKey, "commission_rate", commissionRate)
+	}
+
+	return nil
 }
 
 // ==================== 辅助函数 ====================

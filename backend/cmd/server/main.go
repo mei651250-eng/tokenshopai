@@ -3139,6 +3139,229 @@ func main() {
 		})
 	}
 
+	// ============ 分销商端 API（/distributor/）============
+	// 角色为 agent/referrer/reseller/affiliate 的分销商可访问
+	distGroup := engine.Group("/distributor")
+	distGroup.Use(middleware.AuthMiddleware(jwtManager))
+	{
+		// ---------- 仪表盘 ----------
+		distGroup.GET("/dashboard", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+
+			// 获取该用户的分销商信息
+			distIDs, _ := distService.GetDistributorByUserID(c.Request.Context(), userID)
+			if len(distIDs) == 0 {
+				c.JSON(http.StatusOK, gin.H{
+					"stats": gin.H{
+						"total_commission":     0,
+						"available_balance":    0,
+						"total_referrals":      0,
+						"new_referrals_month":  0,
+						"total_clicks":         0,
+						"conversion_rate":      0,
+					},
+					"recent_commissions": []interface{}{},
+					"recent_referrals":   []interface{}{},
+					"referral_link":      "",
+				})
+				return
+			}
+
+			// 取第一个关联的分销商
+			dist, err := distService.GetDistributor(c.Request.Context(), distIDs[0])
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// 获取佣金记录
+			commissions, _ := distService.ListCommissionRecords(c.Request.Context(), dist.ID, 0, 10)
+
+			// 获取推荐用户
+			referrals := distService.ListReferrals(c.Request.Context(), dist.ID, 0, 10)
+
+			// 余额（从计费服务获取）
+			balance, _ := billingService.GetBalance(c.Request.Context(), tenantID, userID)
+
+			c.JSON(http.StatusOK, gin.H{
+				"stats": gin.H{
+					"total_commission":     float64(dist.TotalCommission) / 100,
+					"available_balance":    balance,
+					"total_referrals":      dist.TotalReferred,
+					"new_referrals_month":  dist.NewReferralsThisMonth,
+					"total_clicks":         dist.TotalClicks,
+					"conversion_rate":      dist.ConversionRate,
+				},
+				"recent_commissions": commissions,
+				"recent_referrals":   referrals,
+				"referral_link":      fmt.Sprintf("https://tokenshopai.com/register?ref=%s", dist.ReferralCode),
+			})
+		})
+
+		// ---------- 推广链接 ----------
+		distGroup.GET("/links", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			distIDs, _ := distService.GetDistributorByUserID(c.Request.Context(), userID)
+			if len(distIDs) == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "distributor not found"})
+				return
+			}
+			dist, err := distService.GetDistributor(c.Request.Context(), distIDs[0])
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"main_link":    fmt.Sprintf("https://tokenshopai.com/register?ref=%s", dist.ReferralCode),
+				"custom_links": distService.ListCustomLinks(c.Request.Context(), dist.ID),
+			})
+		})
+
+		distGroup.POST("/links", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			var req struct {
+				Name       string `json:"name" binding:"required"`
+				TargetPage string `json:"target_page"`
+				Note       string `json:"note"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			link, err := distService.CreateCustomLink(c.Request.Context(), userID, req.Name, req.TargetPage, req.Note)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"link": link})
+		})
+
+		distGroup.DELETE("/links/:id", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			linkID := c.Param("id")
+			if err := distService.DeleteCustomLink(c.Request.Context(), userID, linkID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		// ---------- 推荐用户 ----------
+		distGroup.GET("/referrals", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			distIDs, _ := distService.GetDistributorByUserID(c.Request.Context(), userID)
+			if len(distIDs) == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "distributor not found"})
+				return
+			}
+			page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+			pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+			offset := (page - 1) * pageSize
+			referrals, total := distService.ListReferralsWithCount(c.Request.Context(), distIDs[0], int64(offset), int64(pageSize))
+			c.JSON(http.StatusOK, gin.H{"data": referrals, "total": total})
+		})
+
+		// ---------- 佣金记录 ----------
+		distGroup.GET("/commissions", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			distIDs, _ := distService.GetDistributorByUserID(c.Request.Context(), userID)
+			if len(distIDs) == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "distributor not found"})
+				return
+			}
+			page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+			pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+			offset := int64((page - 1) * pageSize)
+			records, _ := distService.ListCommissionRecords(c.Request.Context(), distIDs[0], offset, int64(pageSize))
+			c.JSON(http.StatusOK, gin.H{"data": records})
+		})
+
+		// ---------- 提现管理 ----------
+		distGroup.GET("/withdraw", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			balance, _ := billingService.GetBalance(c.Request.Context(), tenantID, userID)
+			records := distService.ListWithdrawRecords(c.Request.Context(), userID, 0, 50)
+			c.JSON(http.StatusOK, gin.H{
+				"available_balance": balance,
+				"records":           records,
+			})
+		})
+
+		distGroup.POST("/withdraw", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			tenantID := c.GetString("tenant_id")
+			var req struct {
+				Amount    float64 `json:"amount" binding:"required"`
+				Method    string  `json:"method" binding:"required"`
+				Account   string  `json:"account" binding:"required"`
+				RealName  string  `json:"real_name" binding:"required"`
+				Note      string  `json:"note"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			// 检查余额（balance 单位为分，需转换为元比较）
+			balance, _ := billingService.GetBalance(c.Request.Context(), tenantID, userID)
+			if float64(balance)/100 < req.Amount {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "insufficient balance"})
+				return
+			}
+			if err := distService.RequestWithdraw(c.Request.Context(), userID, req.Amount, req.Method, req.Account, req.RealName, req.Note); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "withdraw request submitted"})
+		})
+
+		distGroup.POST("/withdraw/:id/cancel", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			recordID := c.Param("id")
+			if err := distService.CancelWithdraw(c.Request.Context(), userID, recordID); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "cancelled"})
+		})
+
+		// ---------- 推广素材 ----------
+		distGroup.GET("/materials", func(c *gin.Context) {
+			category := c.DefaultQuery("category", "all")
+			materials := distService.ListPromotionalMaterials(c.Request.Context(), category)
+			c.JSON(http.StatusOK, gin.H{"data": materials})
+		})
+
+		// ---------- 分销商个人资料 ----------
+		distGroup.GET("/profile", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			distIDs, _ := distService.GetDistributorByUserID(c.Request.Context(), userID)
+			if len(distIDs) == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "distributor not found"})
+				return
+			}
+			dist, _ := distService.GetDistributor(c.Request.Context(), distIDs[0])
+			c.JSON(http.StatusOK, gin.H{"distributor": dist})
+		})
+
+		distGroup.PUT("/profile", func(c *gin.Context) {
+			userID := c.GetString("user_id")
+			var req struct {
+				CommissionRate float64 `json:"commission_rate"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := distService.UpdateDistributorProfile(c.Request.Context(), userID, req.CommissionRate); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "updated"})
+		})
+	}
+
 	// 公开模型广场接口（无需认证）
 	engine.GET("/public/models", func(c *gin.Context) {
 		var models []gateway.ModelConfig
@@ -4274,7 +4497,7 @@ func handleOAuthRedirect(c *gin.Context, cfg *config.Config, logger *zap.Logger)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Google OAuth not configured"})
 			return
 		}
-		redirectURI := fmt.Sprintf("https://%s/auth/oauth/google/callback", c.Request.Host)
+		redirectURI := getOAuthRedirectBase(cfg, c.Request.Host) + "/auth/oauth/google/callback"
 		authURL = fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&state=%s&scope=openid+email+profile&response_type=code", clientID, redirectURI, state)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
@@ -4457,6 +4680,28 @@ func exchangeGitHubCode(code string, cfg *config.Config) (accessToken, email, na
 	return
 }
 
+// getOAuthRedirectBase 获取 OAuth 回调的基础 URL
+// 优先使用配置的 FRONTEND_URL，确保与 Google/GitHub Console 中配置的回调地址一致
+func getOAuthRedirectBase(cfg *config.Config, requestHost string) string {
+	// 优先使用环境变量或配置文件中的 FRONTEND_URL
+	frontendURL := cfg.Server.FrontendURL
+	if frontendURL == "" {
+		frontendURL = os.Getenv("FRONTEND_URL")
+	}
+	if frontendURL != "" {
+		// 去掉尾部的 / （如果有的话）
+		frontendURL = strings.TrimRight(frontendURL, "/")
+		return frontendURL
+	}
+
+	// 开发模式：使用请求的 Host
+	scheme := "http"
+	if requestHost != "" && !strings.Contains(requestHost, "localhost") && !strings.Contains(requestHost, "127.0.0.1") {
+		scheme = "https"
+	}
+	return scheme + "://" + requestHost
+}
+
 // exchangeGoogleCode 用 code 换取 Google 用户信息
 func exchangeGoogleCode(code, host string, cfg *config.Config) (accessToken, email, name, avatarURL, providerID string, err error) {
 	clientID := cfg.OAuth.GoogleClientID
@@ -4467,7 +4712,7 @@ func exchangeGoogleCode(code, host string, cfg *config.Config) (accessToken, ema
 	if clientSecret == "" {
 		clientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
 	}
-	redirectURI := fmt.Sprintf("https://%s/auth/oauth/google/callback", host)
+	redirectURI := getOAuthRedirectBase(cfg, host) + "/auth/oauth/google/callback"
 
 	// 换取 token
 	resp, err := http.PostForm("https://oauth2.googleapis.com/token", map[string][]string{
