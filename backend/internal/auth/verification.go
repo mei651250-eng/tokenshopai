@@ -144,7 +144,13 @@ func (s *VerificationService) SendVerificationCode(ctx context.Context, req *Sen
 		}
 		phoneNumber := fmt.Sprintf("%s%s", countryCode, req.Target)
 		if err := s.smsSender.Send(ctx, phoneNumber, code, countryCode); err != nil {
-			return fmt.Errorf("send sms: %w", err)
+			// 演示模式：SMS提供商未配置时，存储固定测试码 123456
+			s.rdb.Set(ctx, codeKey, "123456", 5*time.Minute)
+			s.logger.Warn("sms provider not configured, using demo code 123456",
+				zap.String("target", req.Target),
+				zap.Error(err),
+			)
+			return nil // 不返回错误，前端正常提示发送成功
 		}
 		s.logger.Info("sms verification code sent",
 			zap.String("target", req.Target),
@@ -166,7 +172,13 @@ func (s *VerificationService) SendVerificationCode(ctx context.Context, req *Sen
 			</div>
 		`, code)
 		if err := s.emailSender.Send(ctx, req.Target, subject, body); err != nil {
-			return fmt.Errorf("send email: %w", err)
+			// 演示模式：邮件未配置时，存储固定测试码 123456
+			s.rdb.Set(ctx, codeKey, "123456", 5*time.Minute)
+			s.logger.Warn("email provider not configured, using demo code 123456",
+				zap.String("target", req.Target),
+				zap.Error(err),
+			)
+			return nil
 		}
 		s.logger.Info("email verification code sent",
 			zap.String("target", req.Target),

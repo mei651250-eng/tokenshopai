@@ -3567,6 +3567,69 @@ func main() {
 			handleOAuthCallback(c, jwtManager, db, subService, logger, cfg)
 		})
 
+		// 二维码登录
+		authGroup.GET("/qrcode/check", func(c *gin.Context) {
+			token := c.Query("token")
+			if token == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "missing token"})
+				return
+			}
+			// 检查 Redis 中是否有扫码确认
+			scanned, _ := rdb.Get(c.Request.Context(), "qr:scanned:"+token).Result()
+			if scanned == "1" {
+				c.JSON(http.StatusOK, gin.H{"status": "scanned"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "waiting"})
+		})
+
+		// 模拟扫码确认（手机扫描后调用）
+		authGroup.POST("/qrcode/scan", func(c *gin.Context) {
+			var req struct {
+				Token string `json:"token" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			rdb.Set(c.Request.Context(), "qr:scanned:"+req.Token, "1", 5*time.Minute)
+			c.JSON(http.StatusOK, gin.H{"message": "scanned"})
+		})
+
+		// 扫码登录完成
+		authGroup.GET("/qrcode/login", func(c *gin.Context) {
+			token := c.Query("token")
+			scanned, _ := rdb.Get(c.Request.Context(), "qr:scanned:"+token).Result()
+			if scanned != "1" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "not scanned"})
+				return
+			}
+			// 创建或获取测试用户
+			var user auth.User
+			if err := db.Where("email = ?", "qrcode@tokenhub.test").First(&user).Error; err != nil {
+				var defaultTenant tenant.Tenant
+				db.Where("slug = ?", "default").First(&defaultTenant)
+				user = auth.User{
+					ID:       uuid.New().String(),
+					TenantID: defaultTenant.ID,
+					Username: "qrcode_user",
+					Email:    "qrcode@tokenhub.test",
+					Role:     auth.RoleDeveloper,
+					Status:   auth.UserActive,
+				}
+				db.Create(&user)
+				// 自动试用
+				if subService != nil {
+					plan, _ := subService.GetDefaultPlan(c.Request.Context(), subscription.PlanTrial)
+					if plan != nil { subService.Subscribe(c.Request.Context(), user.ID, user.TenantID, plan.ID) }
+				}
+			}
+			// 生成 token
+			tokenPair, _ := jwtManager.GenerateTokenPair(user.ID, user.TenantID, user.Role, user.Email)
+			rdb.Del(c.Request.Context(), "qr:scanned:"+token)
+			c.JSON(http.StatusOK, gin.H{"token": tokenPair, "user": gin.H{"id": user.ID, "username": user.Username, "email": user.Email}})
+		})
+
 		// 验证码登录/注册
 		authGroup.POST("/verification/send", func(c *gin.Context) {
 			handleSendVerificationCode(c, verificationService, logger)

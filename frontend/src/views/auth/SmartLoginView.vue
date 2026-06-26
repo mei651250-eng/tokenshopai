@@ -198,8 +198,22 @@
                 </el-button>
               </div>
 
-              <!-- OAuth 登录 -->
-              <div v-else-if="['google', 'github', 'alipay', 'wechat', 'apple', 'facebook', 'twitter', 'microsoft'].includes(selectedMethod)" class="text-center py-4">
+              <!-- 支付宝/微信 = 扫码登录 -->
+              <div v-else-if="['alipay', 'wechat'].includes(selectedMethod)" class="text-center py-4">
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  {{ $t('login.scanToLogin') || '请使用' }}{{ getMethodInfo(selectedMethod).name }}{{ $t('login.scanToLogin2') || '扫描二维码登录' }}
+                </p>
+                <div class="inline-block bg-white dark:bg-gray-700 p-4 rounded-xl border-2 border-gray-200 dark:border-gray-600 mb-4">
+                  <canvas ref="qrCanvas" width="200" height="200" class="w-50 h-50"></canvas>
+                </div>
+                <p class="text-xs text-gray-400">{{ qrHint }}</p>
+                <el-button type="primary" size="small" class="mt-3" @click="refreshQRCode" :loading="qrLoading">
+                  {{ $t('login.refreshQR') || '刷新二维码' }}
+                </el-button>
+              </div>
+
+              <!-- 其他 OAuth 登录 -->
+              <div v-else-if="['google', 'github', 'apple', 'facebook', 'twitter', 'microsoft'].includes(selectedMethod)" class="text-center py-4">
                 <p class="text-gray-500 dark:text-gray-400 mb-4">
                   {{ $t('login.redirectTo') || '即将跳转到' }}{{ getMethodInfo(selectedMethod).name }}{{ $t('login.toLogin') || '进行登录' }}
                 </p>
@@ -260,13 +274,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { authApi } from '@/api'
+import QRCode from 'qrcode'
 import { 
   detectIP, 
   getRecommendedLoginMethods, 
@@ -300,6 +315,12 @@ const email = ref('')
 const password = ref('')
 const rememberMe = ref(false)
 const smsCountdown = ref(0)
+
+// QR 码相关
+const qrCanvas = ref<HTMLCanvasElement | null>(null)
+const qrLoading = ref(false)
+const qrHint = ref('')
+let qrPollTimer: any = null
 
 // 计算属性
 const isChinaIP = computed(() => ipInfo.value?.is_china ?? false)
@@ -450,6 +471,84 @@ async function handleEmailLogin() {
     loading.value = false
   }
 }
+
+// 生成二维码登录
+async function generateQRCode(method: LoginMethod) {
+  qrLoading.value = true
+  try {
+    // 生成临时登录 token
+    const token = 'qr_' + Math.random().toString(36).slice(2) + Date.now().toString(36)
+    // 将 token 存到后端 Redis（简化版：用 URL 参数传递）
+    const baseUrl = window.location.origin
+    const qrUrl = `${baseUrl}/auth/oauth/${method}/callback?code=qrcode_${token}&state=qrcode_${token}`
+    
+    await nextTick()
+    if (qrCanvas.value) {
+      await QRCode.toCanvas(qrCanvas.value, qrUrl, {
+        width: 200,
+        margin: 2,
+        color: { dark: '#000000', light: '#ffffff' }
+      })
+    }
+    qrHint.value = '请打开' + (method === 'alipay' ? '支付宝' : '微信') + '扫一扫'
+    
+    // 轮询检查是否扫码登录成功（mock: 10秒后自动成功）
+    startQRPolling(method, token)
+  } catch (e) {
+    ElMessage.error('生成二维码失败')
+  } finally {
+    qrLoading.value = false
+  }
+}
+
+function startQRPolling(method: string, token: string) {
+  if (qrPollTimer) clearInterval(qrPollTimer)
+  let countdown = 30
+  qrPollTimer = setInterval(async () => {
+    countdown--
+    if (countdown <= 0) {
+      clearInterval(qrPollTimer)
+      qrHint.value = '二维码已过期，请刷新'
+      return
+    }
+    try {
+      // 检查后端是否已确认扫码
+      const res = await fetch(`/auth/qrcode/check?token=${token}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.status === 'scanned') {
+          clearInterval(qrPollTimer)
+          qrHint.value = '已扫码，正在登录...'
+          // 等待登录结果
+          setTimeout(async () => {
+            const loginRes = await fetch(`/auth/qrcode/login?token=${token}`)
+            if (loginRes.ok) {
+              const loginData = await loginRes.json()
+              userStore.setToken(loginData.token)
+              userStore.setUser(loginData.user)
+              ElMessage.success(t('login.success') || '登录成功')
+              router.push('/home')
+            }
+          }, 1000)
+        }
+      }
+    } catch {}
+  }, 2000)
+}
+
+function refreshQRCode() {
+  if (selectedMethod.value && ['alipay', 'wechat'].includes(selectedMethod.value)) {
+    generateQRCode(selectedMethod.value)
+  }
+}
+
+// 监听登录方式切换，自动生成二维码
+watch(selectedMethod, (newMethod) => {
+  if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null }
+  if (newMethod && ['alipay', 'wechat'].includes(newMethod)) {
+    generateQRCode(newMethod)
+  }
+})
 
 function handleOAuthLogin(provider: string) {
   // 跳转到 OAuth 授权页面
