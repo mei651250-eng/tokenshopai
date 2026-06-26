@@ -298,9 +298,35 @@ func main() {
 
 	// AI 模型调用接口（兼容 OpenAI 格式）
 	v1.POST("/chat/completions", middleware.APIKeyMiddleware(rdb), middleware.RateLimitMiddleware(rdb, cfg.Gateway.RateLimitPerSec, time.Second, "api"), func(c *gin.Context) {
+		// 订阅检查：验证用户是否有活跃订阅
+		userID := c.GetString("user_id")
+		if userID != "" {
+			active, sub := subService.CheckSubscriptionActive(c.Request.Context(), userID)
+			if !active {
+				c.JSON(http.StatusPaymentRequired, gin.H{
+					"error": gin.H{
+						"message": "No active subscription. Please subscribe to a plan.",
+						"type":    "subscription_required",
+						"code":    "no_subscription",
+					},
+				})
+				return
+			}
+			// 检查 Token 配额
+			_, plan, err := subService.GetUserSubscriptionPlan(c.Request.Context(), userID)
+			if err == nil && plan.TokenLimit > 0 && sub.TokenUsed >= plan.TokenLimit {
+				c.JSON(http.StatusPaymentRequired, gin.H{
+					"error": gin.H{
+						"message": "Token quota exceeded. Please upgrade your plan.",
+						"type":    "quota_exceeded",
+						"code":    "token_quota_exceeded",
+					},
+				})
+				return
+			}
+		}
 		// 余额熔断：检查用户余额是否充足
 		tenantID := c.GetString("tenant_id")
-		userID := c.GetString("user_id")
 		if tenantID != "" && userID != "" {
 			balance, err := billingService.GetBalance(c.Request.Context(), tenantID, userID)
 			if err == nil && balance < cfg.Billing.MinBalance {
@@ -315,7 +341,7 @@ func main() {
 			}
 		}
 		// 渠道优先路由：优先查找渠道做负载均衡，无渠道时 fallback 到 ModelRouter
-		handleChatCompletionWithChannel(c, aiProxy, channelService, billingService, desensitizer, logger)
+		handleChatCompletionWithChannel(c, aiProxy, channelService, billingService, desensitizer, subService, logger)
 	})
 		v1.POST("/completions", middleware.APIKeyMiddleware(rdb), func(c *gin.Context) {
 			handleCompletion(c, aiProxy, billingService, logger)
@@ -3868,6 +3894,7 @@ func handleChatCompletionWithChannel(
 	channelSvc *channel.ChannelService,
 	billingSvc *billing.BillingService,
 	desensitizer *desensitize.Desensitizer,
+	subSvc *subscription.SubscriptionService,
 	logger *zap.Logger,
 ) {
 	var req struct {
@@ -3944,9 +3971,9 @@ func handleChatCompletionWithChannel(
 		chatReq.ChannelID = selected.ID
 
 		if req.Stream {
-			handleStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, chatReq, logger)
+			handleStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, subSvc, chatReq, logger)
 		} else {
-			handleNonStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, desensitizer, chatReq, logger)
+			handleNonStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, desensitizer, subSvc, chatReq, logger)
 		}
 		return
 	}
@@ -3981,6 +4008,7 @@ func handleNonStreamResponseWithChannel(
 	channelSvc *channel.ChannelService,
 	billingSvc *billing.BillingService,
 	desensitizer *desensitize.Desensitizer,
+	subSvc *subscription.SubscriptionService,
 	req *gateway.ChatRequest,
 	logger *zap.Logger,
 ) {
@@ -4021,6 +4049,13 @@ func handleNonStreamResponseWithChannel(
 			TraceID:  req.TraceID,
 			Currency: "CNY",
 		})
+		// 追踪订阅用量
+		if subSvc != nil && req.User != "" {
+			_, sub, _ := subSvc.GetUserSubscriptionPlan(c.Request.Context(), req.User)
+			if sub != nil {
+				_ = subSvc.IncrementUsage(c.Request.Context(), sub.ID, int64(result.Usage.TotalTokens), 1)
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, result.Response)
@@ -4032,6 +4067,7 @@ func handleStreamResponseWithChannel(
 	aiProxy *proxy.AIProxy,
 	channelSvc *channel.ChannelService,
 	billingSvc *billing.BillingService,
+	subSvc *subscription.SubscriptionService,
 	req *gateway.ChatRequest,
 	logger *zap.Logger,
 ) {
@@ -4069,6 +4105,13 @@ func handleStreamResponseWithChannel(
 			TraceID:  req.TraceID,
 			Currency: "CNY",
 		})
+		// 追踪订阅用量
+		if subSvc != nil && req.User != "" {
+			_, sub, _ := subSvc.GetUserSubscriptionPlan(c.Request.Context(), req.User)
+			if sub != nil {
+				_ = subSvc.IncrementUsage(c.Request.Context(), sub.ID, int64(result.Usage.TotalTokens), 1)
+			}
+		}
 	}
 
 	c.Writer.Flush()
