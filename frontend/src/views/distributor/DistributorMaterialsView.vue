@@ -62,7 +62,7 @@
               </svg>
               下载
             </el-button>
-            <el-button size="small" @click="previewMaterial(material)">
+            <el-button size="small" @click="openMaterialPreview(material)">
               预览
             </el-button>
           </div>
@@ -184,7 +184,7 @@ function downloadMaterial(material: any) {
   // TODO: 实现真实下载逻辑
 }
 
-function previewMaterial(material: any) {
+function openMaterialPreview(material: any) {
   previewMaterial.value = material
   showPreviewDialog.value = true
 }
