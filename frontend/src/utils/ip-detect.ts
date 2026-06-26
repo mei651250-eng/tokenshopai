@@ -145,11 +145,11 @@ export async function detectIP(): Promise<IPInfo> {
  * 根据国家代码获取推荐的登录方式
  */
 export function getRecommendedLoginMethods(countryCode: string): LoginMethods {
-  // 中国大陆 - 仅显示国内登录方式（支付宝/微信/手机号/邮箱）
+  // 中国大陆 - 仅显示国内登录方式
   if (countryCode === 'CN') {
     return {
-      primary: ['phone', 'alipay', 'wechat'],
-      secondary: [], // 国内不显示任何国外登录方式
+      primary: ['phone', 'email', 'alipay', 'wechat'],
+      secondary: [],
       recommended: 'phone',
     }
   }
