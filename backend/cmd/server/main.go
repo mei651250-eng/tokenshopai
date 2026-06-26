@@ -213,8 +213,18 @@ func main() {
 	auditService := audit.NewAuditService(logger, db)
 	auditService.AutoMigrate()
 
-	// 验证码服务（短信+邮箱，使用配置文件中的密钥）
-	smsSender := auth.NewAliyunSMSSender(cfg.Verification.SMS.Aliyun.AccessKeyID, cfg.Verification.SMS.Aliyun.AccessKeySecret, cfg.Verification.SMS.Aliyun.SignName, cfg.Verification.SMS.Aliyun.TemplateCode)
+	// 验证码服务（短信+邮箱，根据配置选择服务商）
+	var smsSender auth.SMSSender
+	switch cfg.Verification.SMS.Provider {
+	case "twilio":
+		smsSender = auth.NewTwilioSMSSender(cfg.Verification.SMS.Twilio.AccountSID, cfg.Verification.SMS.Twilio.AuthToken, cfg.Verification.SMS.Twilio.FromNumber)
+	case "tencent":
+		smsSender = auth.NewTencentSMSSender(cfg.Verification.SMS.Tencent.SecretID, cfg.Verification.SMS.Tencent.SecretKey, cfg.Verification.SMS.Tencent.SDKAppID, cfg.Verification.SMS.Tencent.SignName, cfg.Verification.SMS.Tencent.TemplateID)
+	case "vonage":
+		smsSender = auth.NewVonageSMSSender(cfg.Verification.SMS.Vonage.APIKey, cfg.Verification.SMS.Vonage.APISecret, cfg.Verification.SMS.Vonage.FromName)
+	default: // aliyun
+		smsSender = auth.NewAliyunSMSSender(cfg.Verification.SMS.Aliyun.AccessKeyID, cfg.Verification.SMS.Aliyun.AccessKeySecret, cfg.Verification.SMS.Aliyun.SignName, cfg.Verification.SMS.Aliyun.TemplateCode)
+	}
 	emailSender := auth.NewSMTPEmailSender(cfg.Verification.Email.SMTP.Host, cfg.Verification.Email.SMTP.Port, cfg.Verification.Email.SMTP.Username, cfg.Verification.Email.SMTP.Password, cfg.Verification.Email.SMTP.FromAddr, cfg.Verification.Email.SMTP.FromName)
 	verificationService := auth.NewVerificationService(logger, rdb, smsSender, emailSender)
 
