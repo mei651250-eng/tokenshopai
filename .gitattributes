@@ -1,0 +1,4 @@
+# 强制脚本文件使用 LF 行尾，避免 Windows 编辑后在 Linux 服务器执行失败
+*.sh text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

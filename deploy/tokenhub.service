@@ -1,0 +1,17 @@
+[Unit]
+Description=TokenHub API Server
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/tokenhub/backend
+ExecStart=/root/tokenhub/backend/tokenhub
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+# 环境变量由 /etc/systemd/system/tokenhub.service.d/env.conf 提供
+
+[Install]
+WantedBy=multi-user.target
