@@ -22,7 +22,14 @@ fi
 
 # 2. 拉取代码
 step "拉取最新代码"
-cd "$BASE" && git pull
+cd "$BASE"
+if [ -n "$SKIP_PULL" ]; then
+  echo "已设置 SKIP_PULL，跳过 git pull（使用当前已有代码）"
+elif git pull; then
+  echo -e "${GREEN}[ OK ] 已拉取最新代码${NC}"
+else
+  echo -e "${RED}警告: git pull 失败 (网络/DNS 问题)，将使用当前已有代码继续。${NC}"
+fi
 
 # 3. 编译后端
 step "编译后端"
