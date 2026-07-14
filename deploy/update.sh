@@ -3,6 +3,7 @@
 # TokenHub 一键更新脚本
 # 拉取代码 → 编译后端 → 构建前端(自动 swap 防 OOM) → 部署 → 重启
 # 用法: cd /root/tokenhub && bash deploy/update.sh
+#       SKIP_PULL=1 bash deploy/update.sh   # 跳过 git pull
 # ============================================================
 set -e
 
@@ -13,11 +14,15 @@ step(){ echo -e "\n${BLUE}==== $1 ====${NC}"; }
 # 1. 确保 swap (小内存机器防止前端构建 OOM)
 TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
 if [ "$TOTAL_MEM" -lt 3500 ] && ! swapon --show | grep -q '/swap_tokenhub'; then
-  step "确保 swap 分区"
-  fallocate -l 4G /swap_tokenhub 2>/dev/null || dd if=/dev/zero of=/swap_tokenhub bs=1M count=4096
-  chmod 600 /swap_tokenhub && mkswap /swap_tokenhub && swapon /swap_tokenhub
+  step "确保 swap 分区 (6G)"
+  # 用 dd 创建非稀疏文件：fallocate 在部分云盘生成空洞，swapon 会静默失败
+  rm -f /swap_tokenhub
+  dd if=/dev/zero of=/swap_tokenhub bs=1M count=6144 status=none
+  chmod 600 /swap_tokenhub
+  mkswap /swap_tokenhub
+  swapon /swap_tokenhub || { echo -e "${RED}错误: swapon 失败，前端构建可能 OOM。${NC}"; exit 1; }
   grep -q '/swap_tokenhub' /etc/fstab || echo '/swap_tokenhub swap swap defaults 0 0' >> /etc/fstab
-  echo "swap 已启用"
+  echo -e "${GREEN}swap 已启用${NC}"
 fi
 
 # 2. 拉取代码
@@ -42,9 +47,14 @@ go build -o tokenhub ./cmd/server/ && echo -e "${GREEN}[ OK ] 后端编译完成
 # 4. 构建前端 (限制堆内存，避免 OOM)
 step "构建前端"
 cd "$BASE/frontend"
-export NODE_OPTIONS="--max-old-space-size=2048"
-npm install --no-audit --no-fund 2>&1 | tail -2 || true
-npx vite build --minify false 2>&1 | tail -5
+export NODE_OPTIONS="--max-old-space-size=4096"
+npm install --no-audit --no-fund 2>&1 | tail -3 || true
+# 注意: 不要加 | tail 吞掉错误；必须 --minify false 降低内存占用
+npx vite build --minify false
+if [ ! -f dist/index.html ]; then
+  echo -e "${RED}错误: 构建未生成 dist/index.html，中止部署（否则前端将 403）。${NC}"
+  exit 1
+fi
 echo -e "${GREEN}[ OK ] 前端构建完成${NC}"
 
 # 5. 部署前端
@@ -60,7 +70,13 @@ sleep 2
 
 # 7. 验证
 step "验证"
-HEALTH=$(curl -s http://localhost:8080/health || echo "无响应")
+HEALTH=""
+for i in 1 2 3 4 5 6; do
+  HEALTH=$(curl -s --max-time 5 http://localhost:8080/health || echo "")
+  if echo "$HEALTH" | grep -q '"status":"healthy"'; then break; fi
+  echo "  等待后端就绪... ($i/6)"
+  sleep 3
+done
 echo "  后端健康: $HEALTH"
 if systemctl is-active --quiet tokenhub; then
   echo -e "${GREEN}  服务运行中 ✓${NC}"
