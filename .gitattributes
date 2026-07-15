@@ -1,4 +1,8 @@
-# 强制脚本文件使用 LF 行尾，避免 Windows 编辑后在 Linux 服务器执行失败
+# 统一 Go/Shell 文件使用 LF 换行，避免 Windows CRLF 造成的 gofmt/diff 噪音
+*.go text eol=lf
 *.sh text eol=lf
-*.bat text eol=crlf
 *.ps1 text eol=crlf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.conf text eol=lf
+*.md text eol=lf
