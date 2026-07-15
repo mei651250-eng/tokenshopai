@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,17 +19,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/tokenhub/backend/internal/auth"
 	"github.com/tokenhub/backend/internal/billing"
-	"github.com/tokenhub/backend/internal/security/audit"
-	"github.com/tokenhub/backend/internal/channel"
-	tokencore "github.com/tokenhub/backend/internal/token"
 	tokencache "github.com/tokenhub/backend/internal/cache"
+	"github.com/tokenhub/backend/internal/channel"
 	"github.com/tokenhub/backend/internal/common/middleware"
 	"github.com/tokenhub/backend/internal/config"
 	"github.com/tokenhub/backend/internal/distribution"
-	"github.com/tokenhub/backend/internal/subscription"
 	"github.com/tokenhub/backend/internal/finance"
 	"github.com/tokenhub/backend/internal/gateway"
 	"github.com/tokenhub/backend/internal/gateway/lb"
@@ -45,9 +40,12 @@ import (
 	"github.com/tokenhub/backend/internal/quota"
 	"github.com/tokenhub/backend/internal/reconciliation"
 	"github.com/tokenhub/backend/internal/refund"
+	"github.com/tokenhub/backend/internal/security/audit"
 	"github.com/tokenhub/backend/internal/security/desensitize"
 	"github.com/tokenhub/backend/internal/security/waf"
+	"github.com/tokenhub/backend/internal/subscription"
 	"github.com/tokenhub/backend/internal/tenant"
+	tokencore "github.com/tokenhub/backend/internal/token"
 	"github.com/tokenhub/backend/internal/wallet"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -135,7 +133,7 @@ func main() {
 
 	// 钱包服务（Web3钱包绑定 + 加密货币充值）
 	platformAddrs := map[string]map[wallet.ChainType]string{
-		"ethereum":  {wallet.ChainEthereum: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"},
+		"ethereum": {wallet.ChainEthereum: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"},
 		"bsc":      {wallet.ChainBSC: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"},
 		"polygon":  {wallet.ChainPolygon: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18"},
 		"tron":     {wallet.ChainTron: "TYDzsWUZbMF6n3qG1GmwVsQ1v9Xd9gKb0S"},
@@ -303,56 +301,56 @@ func main() {
 	v1 := engine.Group("/v1")
 	{
 
-	// Prometheus 指标端点（无需认证，供 Prometheus 抓取）
-	engine.GET("/metrics", gin.WrapH(promMetrics))
+		// Prometheus 指标端点（无需认证，供 Prometheus 抓取）
+		engine.GET("/metrics", gin.WrapH(promMetrics))
 
-	// AI 模型调用接口（兼容 OpenAI 格式）
-	v1.POST("/chat/completions", middleware.APIKeyMiddleware(rdb), middleware.RateLimitMiddleware(rdb, cfg.Gateway.RateLimitPerSec, time.Second, "api"), func(c *gin.Context) {
-		// 订阅检查：验证用户是否有活跃订阅
-		userID := c.GetString("user_id")
-		if userID != "" {
-			active, sub := subService.CheckSubscriptionActive(c.Request.Context(), userID)
-			if !active {
-				c.JSON(http.StatusPaymentRequired, gin.H{
-					"error": gin.H{
-						"message": "No active subscription. Please subscribe to a plan.",
-						"type":    "subscription_required",
-						"code":    "no_subscription",
-					},
-				})
-				return
+		// AI 模型调用接口（兼容 OpenAI 格式）
+		v1.POST("/chat/completions", middleware.APIKeyMiddleware(rdb), middleware.RateLimitMiddleware(rdb, cfg.Gateway.RateLimitPerSec, time.Second, "api"), func(c *gin.Context) {
+			// 订阅检查：验证用户是否有活跃订阅
+			userID := c.GetString("user_id")
+			if userID != "" {
+				active, sub := subService.CheckSubscriptionActive(c.Request.Context(), userID)
+				if !active {
+					c.JSON(http.StatusPaymentRequired, gin.H{
+						"error": gin.H{
+							"message": "No active subscription. Please subscribe to a plan.",
+							"type":    "subscription_required",
+							"code":    "no_subscription",
+						},
+					})
+					return
+				}
+				// 检查 Token 配额
+				_, plan, err := subService.GetUserSubscriptionPlan(c.Request.Context(), userID)
+				if err == nil && plan.TokenLimit > 0 && sub.TokenUsed >= plan.TokenLimit {
+					c.JSON(http.StatusPaymentRequired, gin.H{
+						"error": gin.H{
+							"message": "Token quota exceeded. Please upgrade your plan.",
+							"type":    "quota_exceeded",
+							"code":    "token_quota_exceeded",
+						},
+					})
+					return
+				}
 			}
-			// 检查 Token 配额
-			_, plan, err := subService.GetUserSubscriptionPlan(c.Request.Context(), userID)
-			if err == nil && plan.TokenLimit > 0 && sub.TokenUsed >= plan.TokenLimit {
-				c.JSON(http.StatusPaymentRequired, gin.H{
-					"error": gin.H{
-						"message": "Token quota exceeded. Please upgrade your plan.",
-						"type":    "quota_exceeded",
-						"code":    "token_quota_exceeded",
-					},
-				})
-				return
+			// 余额熔断：检查用户余额是否充足
+			tenantID := c.GetString("tenant_id")
+			if tenantID != "" && userID != "" {
+				balance, err := billingService.GetBalance(c.Request.Context(), tenantID, userID)
+				if err == nil && balance < cfg.Billing.MinBalance {
+					c.JSON(http.StatusPaymentRequired, gin.H{
+						"error": gin.H{
+							"message": "Insufficient balance. Please top up your account.",
+							"type":    "insufficient_balance",
+							"code":    "balance_too_low",
+						},
+					})
+					return
+				}
 			}
-		}
-		// 余额熔断：检查用户余额是否充足
-		tenantID := c.GetString("tenant_id")
-		if tenantID != "" && userID != "" {
-			balance, err := billingService.GetBalance(c.Request.Context(), tenantID, userID)
-			if err == nil && balance < cfg.Billing.MinBalance {
-				c.JSON(http.StatusPaymentRequired, gin.H{
-					"error": gin.H{
-						"message": "Insufficient balance. Please top up your account.",
-						"type":    "insufficient_balance",
-						"code":    "balance_too_low",
-					},
-				})
-				return
-			}
-		}
-		// 渠道优先路由：优先查找渠道做负载均衡，无渠道时 fallback 到 ModelRouter
-		handleChatCompletionWithChannel(c, aiProxy, channelService, billingService, desensitizer, subService, logger)
-	})
+			// 渠道优先路由：优先查找渠道做负载均衡，无渠道时 fallback 到 ModelRouter
+			handleChatCompletionWithChannel(c, aiProxy, channelService, billingService, desensitizer, subService, logger)
+		})
 		v1.POST("/completions", middleware.APIKeyMiddleware(rdb), func(c *gin.Context) {
 			handleCompletion(c, aiProxy, billingService, logger)
 		})
@@ -398,20 +396,20 @@ func main() {
 		// 创建模型
 		admin.POST("/models", func(c *gin.Context) {
 			var req struct {
-				Name        string  `json:"name" binding:"required"`
-				Provider    string  `json:"provider" binding:"required"`
-				ModelID     string  `json:"model_id" binding:"required"`
-				Endpoint    string  `json:"endpoint" binding:"required"`
-				APIKey      string  `json:"api_key"`
-				MaxTokens   int     `json:"max_tokens"`
-				InputPrice  float64 `json:"input_price"`
-				OutputPrice float64 `json:"output_price"`
-				Currency    string  `json:"currency"`
-				Weight      int     `json:"weight"`
-				Priority    int     `json:"priority"`
-				Enabled     bool    `json:"enabled"`
-				Streamable  bool    `json:"streamable"`
-				TenantID    string  `json:"tenant_id"`
+				Name        string   `json:"name" binding:"required"`
+				Provider    string   `json:"provider" binding:"required"`
+				ModelID     string   `json:"model_id" binding:"required"`
+				Endpoint    string   `json:"endpoint" binding:"required"`
+				APIKey      string   `json:"api_key"`
+				MaxTokens   int      `json:"max_tokens"`
+				InputPrice  float64  `json:"input_price"`
+				OutputPrice float64  `json:"output_price"`
+				Currency    string   `json:"currency"`
+				Weight      int      `json:"weight"`
+				Priority    int      `json:"priority"`
+				Enabled     bool     `json:"enabled"`
+				Streamable  bool     `json:"streamable"`
+				TenantID    string   `json:"tenant_id"`
 				Tags        []string `json:"tags"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
@@ -766,10 +764,10 @@ func main() {
 		// 创建加密货币充值订单
 		admin.POST("/wallet/deposit", func(c *gin.Context) {
 			var req struct {
-				Currency   string `json:"currency" binding:"required"`  // USDT, USDC
-				ChainType  string `json:"chain_type" binding:"required"`
-				Amount     string `json:"amount" binding:"required"`
-				FiatCurrency string `json:"fiat_currency"`  // CNY, USD
+				Currency     string `json:"currency" binding:"required"` // USDT, USDC
+				ChainType    string `json:"chain_type" binding:"required"`
+				Amount       string `json:"amount" binding:"required"`
+				FiatCurrency string `json:"fiat_currency"` // CNY, USD
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -878,7 +876,7 @@ func main() {
 		// 获取支持的钱包类型
 		admin.GET("/wallet/supported-types", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
-				"wallet_types":  wallet.SupportedWalletTypes,
+				"wallet_types":      wallet.SupportedWalletTypes,
 				"crypto_currencies": wallet.SupportedCryptoCurrencies,
 				"stablecoin_chains": wallet.StablecoinChainMap,
 			})
@@ -895,10 +893,10 @@ func main() {
 		// 创建支付订单
 		admin.POST("/payment/create", func(c *gin.Context) {
 			var req struct {
-				Channel     string `json:"channel" binding:"required"`
-				Amount      int64  `json:"amount" binding:"required"`
-				Currency    string `json:"currency" binding:"required"`
-				ToCurrency  string `json:"to_currency"`
+				Channel    string `json:"channel" binding:"required"`
+				Amount     int64  `json:"amount" binding:"required"`
+				Currency   string `json:"currency" binding:"required"`
+				ToCurrency string `json:"to_currency"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1147,9 +1145,9 @@ func main() {
 		// 注册分销商
 		admin.POST("/distribution/register", func(c *gin.Context) {
 			var req struct {
-				Role            string  `json:"role" binding:"required"`
-				CommissionType  string  `json:"commission_type"`
-				CommissionRate  float64 `json:"commission_rate"`
+				Role           string  `json:"role" binding:"required"`
+				CommissionType string  `json:"commission_type"`
+				CommissionRate float64 `json:"commission_rate"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1613,11 +1611,11 @@ func main() {
 			// 白名单过滤，防止role/tenant_id等敏感字段被篡改
 			allowedFields := map[string]bool{
 				"display_name": true,
-				"phone":       true,
-				"company":     true,
-				"bio":         true,
-				"status":      true,
-				"role":        true, // 仅super_admin/tenant_admin可修改，由RBAC中间件控制
+				"phone":        true,
+				"company":      true,
+				"bio":          true,
+				"status":       true,
+				"role":         true, // 仅super_admin/tenant_admin可修改，由RBAC中间件控制
 			}
 			filtered := make(map[string]interface{})
 			for k, v := range updates {
@@ -1857,9 +1855,9 @@ func main() {
 			// 个人信息更新白名单，防止修改role/tenant_id等
 			allowedProfileFields := map[string]bool{
 				"display_name": true,
-				"phone":       true,
-				"company":     true,
-				"bio":         true,
+				"phone":        true,
+				"company":      true,
+				"bio":          true,
 			}
 			filtered := make(map[string]interface{})
 			for k, v := range updates {
@@ -2020,10 +2018,10 @@ func main() {
 			// 从monitor服务获取汇总数据
 			metrics := monitorService.GetMetrics()
 			c.JSON(http.StatusOK, gin.H{
-				"total_requests":  metrics.TotalRequests,
+				"total_requests": metrics.TotalRequests,
 				"total_tokens":   metrics.TotalTokens,
 				"total_amount":   metrics.TotalAmount,
-				"avg_latency":   metrics.P50LatencyMs,
+				"avg_latency":    metrics.P50LatencyMs,
 				"success_rate":   metrics.SuccessRate,
 				"active_models":  len(metrics.Models),
 			})
@@ -2114,13 +2112,13 @@ func main() {
 			for _, m := range metrics.Models {
 				if m.Errors > 0 {
 					data = append(data, map[string]interface{}{
-						"model_id":    m.ModelID,
-						"model_name":  m.ModelName,
-						"provider":    m.Provider,
-						"total_reqs":  m.Requests,
-						"errors":      m.Errors,
-						"error_rate":  float64(m.Errors) / float64(m.Requests) * 100,
-						"circuit":     m.CircuitState,
+						"model_id":   m.ModelID,
+						"model_name": m.ModelName,
+						"provider":   m.Provider,
+						"total_reqs": m.Requests,
+						"errors":     m.Errors,
+						"error_rate": float64(m.Errors) / float64(m.Requests) * 100,
+						"circuit":    m.CircuitState,
 					})
 				}
 			}
@@ -2152,7 +2150,7 @@ func main() {
 					"export_time": time.Now().Format("2006-01-02 15:04:05"),
 					"time_range":  timeRange,
 					"summary": map[string]interface{}{
-						"total_requests":  metrics.TotalRequests,
+						"total_requests": metrics.TotalRequests,
 						"total_tokens":   metrics.TotalTokens,
 						"total_amount":   metrics.TotalAmount,
 						"success_rate":   metrics.SuccessRate,
@@ -2275,17 +2273,17 @@ func main() {
 			}
 			// 脱敏：不返回 key_hash
 			type APIKeySafe struct {
-				ID          string           `json:"id"`
-				Name        string           `json:"name"`
-				KeyPrefix   string           `json:"key_prefix"`
+				ID          string            `json:"id"`
+				Name        string            `json:"name"`
+				KeyPrefix   string            `json:"key_prefix"`
 				Permissions []auth.Permission `json:"permissions"`
-				Models      []string         `json:"models"`
-				RateLimit   int              `json:"rate_limit"`
-				QuotaDaily  int64            `json:"quota_daily"`
+				Models      []string          `json:"models"`
+				RateLimit   int               `json:"rate_limit"`
+				QuotaDaily  int64             `json:"quota_daily"`
 				Status      auth.APIKeyStatus `json:"status"`
-				ExpiresAt   *time.Time       `json:"expires_at,omitempty"`
-				CreatedAt   time.Time        `json:"created_at"`
-				LastUsedAt  *time.Time       `json:"last_used_at,omitempty"`
+				ExpiresAt   *time.Time        `json:"expires_at,omitempty"`
+				CreatedAt   time.Time         `json:"created_at"`
+				LastUsedAt  *time.Time        `json:"last_used_at,omitempty"`
 			}
 			safe := make([]APIKeySafe, 0, len(keys))
 			for _, k := range keys {
@@ -2311,12 +2309,12 @@ func main() {
 			userID := c.GetString("user_id")
 			tenantID := c.GetString("tenant_id")
 			var req struct {
-				Name        string           `json:"name" binding:"required"`
+				Name        string            `json:"name" binding:"required"`
 				Permissions []auth.Permission `json:"permissions"`
-				Models      []string         `json:"models"`
-				RateLimit   int              `json:"rate_limit"`
-				QuotaDaily  int64            `json:"quota_daily"`
-				ExpiresAt   *time.Time       `json:"expires_at"`
+				Models      []string          `json:"models"`
+				RateLimit   int               `json:"rate_limit"`
+				QuotaDaily  int64             `json:"quota_daily"`
+				ExpiresAt   *time.Time        `json:"expires_at"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2555,11 +2553,21 @@ func main() {
 				return
 			}
 			updates := map[string]interface{}{}
-			if req.Title != "" { updates["title"] = req.Title }
-			if req.Content != "" { updates["content"] = req.Content }
-			if req.Type != "" { updates["type"] = req.Type }
-			if req.Pinned != nil { updates["pinned"] = *req.Pinned }
-			if req.Status != "" { updates["status"] = req.Status }
+			if req.Title != "" {
+				updates["title"] = req.Title
+			}
+			if req.Content != "" {
+				updates["content"] = req.Content
+			}
+			if req.Type != "" {
+				updates["type"] = req.Type
+			}
+			if req.Pinned != nil {
+				updates["pinned"] = *req.Pinned
+			}
+			if req.Status != "" {
+				updates["status"] = req.Status
+			}
 			db.Model(&Announcement{}).Where("id = ?", id).Updates(updates)
 			c.JSON(http.StatusOK, gin.H{"message": "updated"})
 		})
@@ -2585,7 +2593,7 @@ func main() {
 				SourceModel string `json:"source_model" binding:"required"`
 				TargetModel string `json:"target_model" binding:"required"`
 				TenantID    string `json:"tenant_id"`
-				Priority   int    `json:"priority"`
+				Priority    int    `json:"priority"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2673,10 +2681,18 @@ func main() {
 				return
 			}
 			updates := map[string]interface{}{}
-			if req.Name != "" { updates["name"] = req.Name }
-			if req.Multiplier > 0 { updates["multiplier"] = req.Multiplier }
-			if req.RpmLimit > 0 { updates["rpm_limit"] = req.RpmLimit }
-			if req.TpmLimit > 0 { updates["tpm_limit"] = req.TpmLimit }
+			if req.Name != "" {
+				updates["name"] = req.Name
+			}
+			if req.Multiplier > 0 {
+				updates["multiplier"] = req.Multiplier
+			}
+			if req.RpmLimit > 0 {
+				updates["rpm_limit"] = req.RpmLimit
+			}
+			if req.TpmLimit > 0 {
+				updates["tpm_limit"] = req.TpmLimit
+			}
 			db.Model(&UserGroup{}).Where("id = ?", id).Updates(updates)
 			c.JSON(http.StatusOK, gin.H{"message": "updated"})
 		})
@@ -2740,8 +2756,8 @@ func main() {
 			var prog OnboardingProgress
 			if err := db.Where("user_id = ?", userID).First(&prog).Error; err != nil {
 				prog = OnboardingProgress{
-					ID:      uuid.New().String(),
-					UserID:  userID,
+					ID:     uuid.New().String(),
+					UserID: userID,
 				}
 			}
 			if req.CurrentStep != nil {
@@ -3000,17 +3016,17 @@ func main() {
 				return
 			}
 			type APIKeySafe struct {
-				ID          string           `json:"id"`
-				Name        string           `json:"name"`
-				KeyPrefix   string           `json:"key_prefix"`
+				ID          string            `json:"id"`
+				Name        string            `json:"name"`
+				KeyPrefix   string            `json:"key_prefix"`
 				Permissions []auth.Permission `json:"permissions"`
-				Models      []string         `json:"models"`
-				RateLimit   int              `json:"rate_limit"`
-				QuotaDaily  int64            `json:"quota_daily"`
+				Models      []string          `json:"models"`
+				RateLimit   int               `json:"rate_limit"`
+				QuotaDaily  int64             `json:"quota_daily"`
 				Status      auth.APIKeyStatus `json:"status"`
-				ExpiresAt   *time.Time       `json:"expires_at,omitempty"`
-				CreatedAt   time.Time        `json:"created_at"`
-				LastUsedAt  *time.Time       `json:"last_used_at,omitempty"`
+				ExpiresAt   *time.Time        `json:"expires_at,omitempty"`
+				CreatedAt   time.Time         `json:"created_at"`
+				LastUsedAt  *time.Time        `json:"last_used_at,omitempty"`
 			}
 			safe := make([]APIKeySafe, 0, len(keys))
 			for _, k := range keys {
@@ -3029,12 +3045,12 @@ func main() {
 			userID := c.GetString("user_id")
 			tenantID := c.GetString("tenant_id")
 			var req struct {
-				Name        string           `json:"name" binding:"required"`
+				Name        string            `json:"name" binding:"required"`
 				Permissions []auth.Permission `json:"permissions"`
-				Models      []string         `json:"models"`
-				RateLimit   int              `json:"rate_limit"`
-				QuotaDaily  int64            `json:"quota_daily"`
-				ExpiresAt   *time.Time       `json:"expires_at"`
+				Models      []string          `json:"models"`
+				RateLimit   int               `json:"rate_limit"`
+				QuotaDaily  int64             `json:"quota_daily"`
+				ExpiresAt   *time.Time        `json:"expires_at"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -3065,7 +3081,7 @@ func main() {
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{
-				"data": gin.H{"id": apiKey.ID, "name": apiKey.Name, "key": rawKey, "key_prefix": prefix, "status": apiKey.Status, "created_at": apiKey.CreatedAt},
+				"data":    gin.H{"id": apiKey.ID, "name": apiKey.Name, "key": rawKey, "key_prefix": prefix, "status": apiKey.Status, "created_at": apiKey.CreatedAt},
 				"warning": "请妥善保存此 API Key，系统不会再次显示完整密钥",
 			})
 		})
@@ -3327,12 +3343,12 @@ func main() {
 			if len(distIDs) == 0 {
 				c.JSON(http.StatusOK, gin.H{
 					"stats": gin.H{
-						"total_commission":     0,
-						"available_balance":    0,
-						"total_referrals":      0,
-						"new_referrals_month":  0,
-						"total_clicks":         0,
-						"conversion_rate":      0,
+						"total_commission":    0,
+						"available_balance":   0,
+						"total_referrals":     0,
+						"new_referrals_month": 0,
+						"total_clicks":        0,
+						"conversion_rate":     0,
 					},
 					"recent_commissions": []interface{}{},
 					"recent_referrals":   []interface{}{},
@@ -3359,12 +3375,12 @@ func main() {
 
 			c.JSON(http.StatusOK, gin.H{
 				"stats": gin.H{
-					"total_commission":     float64(dist.TotalCommission) / 100,
-					"available_balance":    balance,
-					"total_referrals":      dist.TotalReferred,
-					"new_referrals_month":  dist.NewReferralsThisMonth,
-					"total_clicks":         dist.TotalClicks,
-					"conversion_rate":      dist.ConversionRate,
+					"total_commission":    float64(dist.TotalCommission) / 100,
+					"available_balance":   balance,
+					"total_referrals":     dist.TotalReferred,
+					"new_referrals_month": dist.NewReferralsThisMonth,
+					"total_clicks":        dist.TotalClicks,
+					"conversion_rate":     dist.ConversionRate,
 				},
 				"recent_commissions": commissions,
 				"recent_referrals":   referrals,
@@ -3466,11 +3482,11 @@ func main() {
 			userID := c.GetString("user_id")
 			tenantID := c.GetString("tenant_id")
 			var req struct {
-				Amount    float64 `json:"amount" binding:"required"`
-				Method    string  `json:"method" binding:"required"`
-				Account   string  `json:"account" binding:"required"`
-				RealName  string  `json:"real_name" binding:"required"`
-				Note      string  `json:"note"`
+				Amount   float64 `json:"amount" binding:"required"`
+				Method   string  `json:"method" binding:"required"`
+				Account  string  `json:"account" binding:"required"`
+				RealName string  `json:"real_name" binding:"required"`
+				Note     string  `json:"note"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -3631,7 +3647,9 @@ func main() {
 				// 自动试用
 				if subService != nil {
 					plan, _ := subService.GetDefaultPlan(c.Request.Context(), subscription.PlanTrial)
-					if plan != nil { subService.Subscribe(c.Request.Context(), user.ID, user.TenantID, plan.ID) }
+					if plan != nil {
+						subService.Subscribe(c.Request.Context(), user.ID, user.TenantID, plan.ID)
+					}
 				}
 			}
 			// 生成 token
@@ -3760,7 +3778,7 @@ type Announcement struct {
 	ID        string    `json:"id" gorm:"primaryKey"`
 	Title     string    `json:"title"`
 	Content   string    `json:"content"`
-	Type      string    `json:"type"` // info, warning, success, error
+	Type      string    `json:"type"`   // info, warning, success, error
 	Status    string    `json:"status"` // active, archived
 	Pinned    bool      `json:"pinned"`
 	CreatedAt time.Time `json:"created_at"`
@@ -3789,14 +3807,14 @@ type UserGroup struct {
 
 // ReferralInvite 邀请记录
 type ReferralInvite struct {
-	ID          string     `json:"id" gorm:"primaryKey"`
-	InviterID   string     `json:"inviter_id" gorm:"index"`
-	InviteeID   string     `json:"invitee_id"`
-	InviteCode  string     `json:"invite_code" gorm:"index"`
-	RewardAmount float64   `json:"reward_amount"`
-	Status      string     `json:"status"` // pending, rewarded, expired
-	RewardedAt  *time.Time `json:"rewarded_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID           string     `json:"id" gorm:"primaryKey"`
+	InviterID    string     `json:"inviter_id" gorm:"index"`
+	InviteeID    string     `json:"invitee_id"`
+	InviteCode   string     `json:"invite_code" gorm:"index"`
+	RewardAmount float64    `json:"reward_amount"`
+	Status       string     `json:"status"` // pending, rewarded, expired
+	RewardedAt   *time.Time `json:"rewarded_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 // OAuthAccount 第三方 OAuth 绑定
@@ -3814,14 +3832,14 @@ type OAuthAccount struct {
 
 // OnboardingProgress 用户引导进度
 type OnboardingProgress struct {
-	ID           string    `json:"id" gorm:"primaryKey"`
-	UserID       string    `json:"user_id" gorm:"uniqueIndex"`
-	CurrentStep  int       `json:"current_step"`
-	Completed    bool      `json:"completed"`
-	Skipped      bool      `json:"skipped"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID          string     `json:"id" gorm:"primaryKey"`
+	UserID      string     `json:"user_id" gorm:"uniqueIndex"`
+	CurrentStep int        `json:"current_step"`
+	Completed   bool       `json:"completed"`
+	Skipped     bool       `json:"skipped"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 func initLogger(mode string) *zap.Logger {
@@ -3957,1148 +3975,4 @@ func initSuperAdmin(db *gorm.DB, logger *zap.Logger) {
 		zap.String("username", "admin"),
 		zap.String("role", string(auth.RoleSuperAdmin)),
 	)
-}
-
-// handleChatCompletionWithChannel 渠道优先路由的Chat Completion处理
-// 优先查找渠道做负载均衡/Key轮换/自动重试，无可用渠道时 fallback 到原有 ModelRouter
-func handleChatCompletionWithChannel(
-	c *gin.Context,
-	aiProxy *proxy.AIProxy,
-	channelSvc *channel.ChannelService,
-	billingSvc *billing.BillingService,
-	desensitizer *desensitize.Desensitizer,
-	subSvc *subscription.SubscriptionService,
-	logger *zap.Logger,
-) {
-	var req struct {
-		Model    string `json:"model"`
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		Stream      bool     `json:"stream"`
-		MaxTokens   *int     `json:"max_tokens,omitempty"`
-		Temperature *float64 `json:"temperature,omitempty"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": map[string]string{
-				"code":    "invalid_request",
-				"message": err.Error(),
-			},
-		})
-		return
-	}
-
-	tenantID := c.GetString("tenant_id")
-	userID := c.GetString("user_id")
-
-	// 1. 尝试渠道路由
-	channels, err := channelSvc.GetChannelsForModel(c.Request.Context(), req.Model, tenantID)
-	if err == nil && len(channels) > 0 {
-		// 渠道亲和性：同一用户尽量路由到同一渠道
-		affinityID := channelSvc.GetAffinity(userID)
-		var selected *channel.Channel
-		for _, ch := range channels {
-			if ch.ID == affinityID && ch.Enabled {
-				selected = ch
-				break
-			}
-		}
-		if selected == nil {
-			// 按优先级+权重选择第一个可用渠道
-			selected = channels[0]
-		}
-
-		// Key轮换
-		apiKey := channelSvc.GetCurrentAPIKey(selected)
-		channelSvc.SetAffinity(userID, selected.ID)
-
-		logger.Info("channel routed request",
-			zap.String("model", req.Model),
-			zap.String("channel_id", selected.ID),
-			zap.String("provider", string(selected.Provider)),
-		)
-
-		// 构造 ChatRequest 使用渠道的 endpoint/apiKey
-		chatReq := &gateway.ChatRequest{
-			Model:    req.Model,
-			Stream:   req.Stream,
-			TenantID: tenantID,
-			APIKeyID: c.GetString("api_key_id"),
-			TraceID:  c.GetString("request_id"),
-			MaxTokens: req.MaxTokens,
-		}
-		for _, msg := range req.Messages {
-			chatReq.Messages = append(chatReq.Messages, gateway.ChatMessage{
-				Role:    msg.Role,
-				Content: msg.Content,
-			})
-		}
-
-		// 通过渠道路由的请求：直接使用 proxy 但覆盖路由结果中的 endpoint/apiKey
-		// 这里用一个简化的方式：在 ChatRequest 上标记渠道路由信息
-		chatReq.ChannelEndpoint = selected.Endpoint
-		chatReq.ChannelAPIKey = apiKey
-		chatReq.ChannelID = selected.ID
-
-		if req.Stream {
-			handleStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, subSvc, chatReq, logger)
-		} else {
-			handleNonStreamResponseWithChannel(c, aiProxy, channelSvc, billingSvc, desensitizer, subSvc, chatReq, logger)
-		}
-		return
-	}
-
-	// 2. 无可用渠道，fallback 到原有 ModelRouter
-	chatReq := &gateway.ChatRequest{
-		Model:    req.Model,
-		Stream:   req.Stream,
-		TenantID: tenantID,
-		APIKeyID: c.GetString("api_key_id"),
-		TraceID:  c.GetString("request_id"),
-		MaxTokens: req.MaxTokens,
-	}
-	for _, msg := range req.Messages {
-		chatReq.Messages = append(chatReq.Messages, gateway.ChatMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
-	}
-
-	if req.Stream {
-		handleStreamResponse(c, aiProxy, billingSvc, chatReq, logger)
-	} else {
-		handleNonStreamResponse(c, aiProxy, billingSvc, desensitizer, chatReq, logger)
-	}
-}
-
-// handleNonStreamResponseWithChannel 使用渠道的非流式响应
-func handleNonStreamResponseWithChannel(
-	c *gin.Context,
-	aiProxy *proxy.AIProxy,
-	channelSvc *channel.ChannelService,
-	billingSvc *billing.BillingService,
-	desensitizer *desensitize.Desensitizer,
-	subSvc *subscription.SubscriptionService,
-	req *gateway.ChatRequest,
-	logger *zap.Logger,
-) {
-	start := time.Now()
-
-	// 使用渠道路由代理请求
-	result, err := aiProxy.ProxyWithChannel(c.Request.Context(), req)
-	if err != nil {
-		channelSvc.RecordFailure(c.Request.Context(), req.ChannelID, err.Error())
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error": map[string]string{
-				"code":    "upstream_error",
-				"message": err.Error(),
-			},
-		})
-		return
-	}
-
-	channelSvc.RecordSuccess(c.Request.Context(), req.ChannelID, int(time.Since(start).Milliseconds()))
-	logger.Info("channel request completed",
-		zap.String("channel_id", req.ChannelID),
-		zap.Duration("latency", time.Since(start)),
-	)
-
-	// 脱敏处理响应
-	if result.Response != nil && len(result.Response.Choices) > 0 && result.Response.Choices[0].Message != nil {
-		result.Response.Choices[0].Message.Content = desensitizer.Desensitize(
-			result.Response.Choices[0].Message.Content,
-		)
-	}
-
-	// 扣费
-	if result.Usage != nil {
-		_, _ = billingSvc.DeductBalance(c.Request.Context(), &billing.DeductRequest{
-			TenantID: req.TenantID,
-			UserID:   req.User,
-			Usage:    result.Usage,
-			TraceID:  req.TraceID,
-			Currency: "CNY",
-		})
-		// 追踪订阅用量
-		if subSvc != nil && req.User != "" {
-			_, sub, _ := subSvc.GetUserSubscriptionPlan(c.Request.Context(), req.User)
-			if sub != nil {
-				_ = subSvc.IncrementUsage(c.Request.Context(), sub.ID, int64(result.Usage.TotalTokens), 1)
-			}
-		}
-	}
-
-	c.JSON(http.StatusOK, result.Response)
-}
-
-// handleStreamResponseWithChannel 使用渠道的流式响应
-func handleStreamResponseWithChannel(
-	c *gin.Context,
-	aiProxy *proxy.AIProxy,
-	channelSvc *channel.ChannelService,
-	billingSvc *billing.BillingService,
-	subSvc *subscription.SubscriptionService,
-	req *gateway.ChatRequest,
-	logger *zap.Logger,
-) {
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-
-	start := time.Now()
-
-	result, err := aiProxy.ProxyStreamWithChannel(c.Request.Context(), req, func(chunk *proxy.StreamChunkResult) error {
-		if chunk.Done {
-			c.SSEvent("message", "[DONE]")
-			return nil
-		}
-		if chunk.Chunk != nil {
-			c.SSEvent("message", chunk.Chunk)
-		}
-		return nil
-	})
-
-	if err != nil {
-		channelSvc.RecordFailure(c.Request.Context(), req.ChannelID, err.Error())
-		logger.Error("channel stream proxy failed", zap.Error(err))
-		return
-	}
-
-	channelSvc.RecordSuccess(c.Request.Context(), req.ChannelID, int(time.Since(start).Milliseconds()))
-
-	// 流式扣费
-	if result != nil && result.Usage != nil {
-		_, _ = billingSvc.DeductBalance(c.Request.Context(), &billing.DeductRequest{
-			TenantID: req.TenantID,
-			UserID:   req.User,
-			Usage:    result.Usage,
-			TraceID:  req.TraceID,
-			Currency: "CNY",
-		})
-		// 追踪订阅用量
-		if subSvc != nil && req.User != "" {
-			_, sub, _ := subSvc.GetUserSubscriptionPlan(c.Request.Context(), req.User)
-			if sub != nil {
-				_ = subSvc.IncrementUsage(c.Request.Context(), sub.ID, int64(result.Usage.TotalTokens), 1)
-			}
-		}
-	}
-
-	c.Writer.Flush()
-}
-
-// handleChatCompletion 处理Chat Completion请求
-func handleChatCompletion(
-	c *gin.Context,
-	aiProxy *proxy.AIProxy,
-	billingService *billing.BillingService,
-	desensitizer *desensitize.Desensitizer,
-	logger *zap.Logger,
-) {
-	var req struct {
-		Model    string `json:"model"`
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		Stream     bool    `json:"stream"`
-		MaxTokens  *int    `json:"max_tokens,omitempty"`
-		Temperature *float64 `json:"temperature,omitempty"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": map[string]string{
-				"code":    "invalid_request",
-				"message": err.Error(),
-			},
-		})
-		return
-	}
-
-	// 构造内部请求
-	chatReq := &gateway.ChatRequest{
-		Model:    req.Model,
-		Stream:   req.Stream,
-		TenantID: c.GetString("tenant_id"),
-		APIKeyID: c.GetString("api_key_id"),
-		TraceID:  c.GetString("request_id"),
-		MaxTokens: req.MaxTokens,
-	}
-	for _, msg := range req.Messages {
-		chatReq.Messages = append(chatReq.Messages, gateway.ChatMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
-	}
-
-	if req.Stream {
-		// 流式响应
-		handleStreamResponse(c, aiProxy, billingService, chatReq, logger)
-	} else {
-		// 非流式响应
-		handleNonStreamResponse(c, aiProxy, billingService, desensitizer, chatReq, logger)
-	}
-}
-
-func handleNonStreamResponse(
-	c *gin.Context,
-	aiProxy *proxy.AIProxy,
-	billingService *billing.BillingService,
-	desensitizer *desensitize.Desensitizer,
-	req *gateway.ChatRequest,
-	logger *zap.Logger,
-) {
-	result, err := aiProxy.Proxy(c.Request.Context(), req)
-	if err != nil {
-		logger.Error("proxy failed", zap.Error(err))
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error": map[string]string{
-				"code":    "upstream_error",
-				"message": err.Error(),
-			},
-		})
-		return
-	}
-
-	// 脱敏处理响应
-	if result.Response != nil && len(result.Response.Choices) > 0 && result.Response.Choices[0].Message != nil {
-		result.Response.Choices[0].Message.Content = desensitizer.Desensitize(
-			result.Response.Choices[0].Message.Content,
-		)
-	}
-
-	// 扣费
-	if result.Usage != nil {
-		_, _ = billingService.DeductBalance(c.Request.Context(), &billing.DeductRequest{
-			TenantID: req.TenantID,
-			UserID:   req.User,
-			Usage:    result.Usage,
-			TraceID:  req.TraceID,
-			Currency: "CNY",
-		})
-	}
-
-	c.JSON(http.StatusOK, result.Response)
-}
-
-func handleStreamResponse(
-	c *gin.Context,
-	aiProxy *proxy.AIProxy,
-	billingService *billing.BillingService,
-	req *gateway.ChatRequest,
-	logger *zap.Logger,
-) {
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-
-	result, err := aiProxy.ProxyStream(c.Request.Context(), req, func(chunk *proxy.StreamChunkResult) error {
-		if chunk.Done {
-			c.SSEvent("message", "[DONE]")
-			return nil
-		}
-		if chunk.Chunk != nil {
-			c.SSEvent("message", chunk.Chunk)
-		}
-		return nil
-	})
-
-	if err != nil {
-		logger.Error("stream proxy failed", zap.Error(err))
-		return
-	}
-
-	// 流式扣费
-	if result != nil && result.Usage != nil {
-		_, _ = billingService.DeductBalance(c.Request.Context(), &billing.DeductRequest{
-			TenantID: req.TenantID,
-			UserID:   req.User,
-			Usage:    result.Usage,
-			TraceID:  req.TraceID,
-			Currency: "CNY",
-		})
-	}
-
-	c.Writer.Flush()
-}
-
-func handleListModels(c *gin.Context, router *smartrouter.ModelRouter) {
-	// 从路由器获取已注册的模型列表
-	models := router.GetAllModels()
-	data := make([]interface{}, 0, len(models))
-	for _, m := range models {
-		if m.Enabled {
-			data = append(data, gin.H{
-				"id":       m.ID,
-				"object":   "model",
-				"created":  m.CreatedAt,
-				"owned_by": string(m.Provider),
-				"name":     m.Name,
-			})
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   data,
-	})
-}
-
-// handleCompletion 处理Text Completion请求
-func handleCompletion(c *gin.Context, aiProxy *proxy.AIProxy, billingService *billing.BillingService, logger *zap.Logger) {
-	c.JSON(http.StatusOK, gin.H{
-		"error": map[string]string{
-			"code":    "deprecated",
-			"message": "use /v1/chat/completions instead",
-		},
-	})
-}
-
-func handleLogin(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, logger *zap.Logger) {
-	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 从数据库查询用户
-	var user auth.User
-	if err := db.Where("email = ? AND status = ?", req.Email, auth.UserActive).First(&user).Error; err != nil {
-		logger.Warn("login failed: user not found or disabled", zap.String("email", req.Email))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
-		return
-	}
-
-	// 验证密码
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		logger.Warn("login failed: wrong password", zap.String("email", req.Email))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid email or password"})
-		return
-	}
-
-	// 更新最后登录时间
-	now := time.Now()
-	db.Model(&user).Update("last_login_at", &now)
-
-	// 生成JWT
-	tokenPair, err := jwtManager.GenerateTokenPair(user.ID, user.TenantID, user.Role, user.Email)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"token": tokenPair,
-		"user": gin.H{
-			"id":       user.ID,
-			"username": user.Username,
-			"email":    user.Email,
-			"role":     user.Role,
-			"tenant_id": user.TenantID,
-		},
-	})
-}
-
-func handleRegister(c *gin.Context, db *gorm.DB, subSvc *subscription.SubscriptionService, logger *zap.Logger) {
-	var req struct {
-		Username    string `json:"username"`
-		Email       string `json:"email" binding:"required,email"`
-		Password    string `json:"password" binding:"required,min=8"`
-		TenantID    string `json:"tenant_id"`
-		InviteCode  string `json:"invite_code"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 检查邮箱是否已注册
-	var count int64
-	db.Model(&auth.User{}).Where("email = ?", req.Email).Count(&count)
-	if count > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
-		return
-	}
-
-	// 加密密码
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
-		return
-	}
-
-	// 确定租户ID
-	tenantID := req.TenantID
-	if tenantID == "" {
-		// 分配到默认租户
-		var defaultTenant tenant.Tenant
-		if err := db.Where("slug = ?", "default").First(&defaultTenant).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "default tenant not found"})
-			return
-		}
-		tenantID = defaultTenant.ID
-	}
-
-	// 创建用户
-	username := req.Username
-	if username == "" {
-		username = strings.Split(req.Email, "@")[0]
-	}
-	user := &auth.User{
-		ID:           uuid.New().String(),
-		TenantID:     tenantID,
-		Username:     username,
-		Email:        req.Email,
-		PasswordHash: string(hash),
-		Role:         auth.RoleDeveloper,
-		Status:       auth.UserActive,
-		Language:     "zh-CN",
-		Timezone:     "Asia/Shanghai",
-	}
-
-	if err := db.Create(user).Error; err != nil {
-		logger.Error("failed to create user", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
-		return
-	}
-
-	// 处理邀请码
-	if req.InviteCode != "" {
-		var inviter auth.User
-		if err := db.Where("id = ?", strings.TrimPrefix(req.InviteCode, "INV-")).First(&inviter).Error; err == nil {
-			// 找到邀请人，创建邀请记录
-			db.Create(&ReferralInvite{
-				ID:           uuid.New().String(),
-				InviterID:    inviter.ID,
-				InviteeID:    user.ID,
-				InviteCode:   req.InviteCode,
-				RewardAmount: 5.0, // 默认奖励 5 元
-				Status:       "pending",
-				CreatedAt:    time.Now(),
-			})
-			logger.Info("referral recorded", zap.String("inviter", inviter.ID), zap.String("invitee", user.ID))
-		}
-	}
-
-	// 自动开通免费试用
-	if subSvc != nil {
-		trialPlan, err := subSvc.GetDefaultPlan(c.Request.Context(), subscription.PlanTrial)
-		if err == nil && trialPlan != nil {
-			if _, err := subSvc.Subscribe(c.Request.Context(), user.ID, user.TenantID, trialPlan.ID); err != nil {
-				logger.Warn("auto trial subscription failed", zap.String("user_id", user.ID), zap.Error(err))
-			} else {
-				logger.Info("auto trial assigned", zap.String("user_id", user.ID))
-			}
-		}
-	}
-
-	logger.Info("user registered", zap.String("email", req.Email))
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "user registered successfully",
-		"user": gin.H{
-			"id":         user.ID,
-			"username":   user.Username,
-			"email":      user.Email,
-			"tenant_id":  user.TenantID,
-		},
-	})
-}
-
-func handleMonitorWebSocket(c *gin.Context, monitorService *monitor.MonitorService, logger *zap.Logger) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			// 生产环境应检查Origin是否在允许列表中
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				return true // 非浏览器请求
-			}
-			// 开发环境允许所有来源，生产环境应限制
-			return true
-		},
-	}
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		logger.Error("websocket upgrade failed", zap.Error(err))
-		return
-	}
-
-	monitorService.RegisterClient(conn)
-	defer monitorService.UnregisterClient(conn)
-
-	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-	}
-}
-
-// handleSendVerificationCode 发送验证码（短信/邮箱）
-func handleSendVerificationCode(c *gin.Context, svc *auth.VerificationService, logger *zap.Logger) {
-	var req auth.SendCodeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := svc.SendVerificationCode(c.Request.Context(), &req); err != nil {
-		logger.Warn("send verification code failed", zap.Error(err))
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "verification code sent"})
-}
-
-// handleLoginByCode 验证码登录
-func handleLoginByCode(c *gin.Context, svc *auth.VerificationService, jwtManager *auth.JWTManager, logger *zap.Logger) {
-	var req auth.LoginByCodeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	tokenPair, userInfo, err := svc.LoginOrRegisterByCode(c.Request.Context(), &req, jwtManager)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"token":   tokenPair,
-		"user":    userInfo,
-		"is_new":  true, // 简化处理
-	})
-}
-
-// handleRegisterByCode 验证码注册
-func handleRegisterByCode(c *gin.Context, svc *auth.VerificationService, jwtManager *auth.JWTManager, logger *zap.Logger) {
-	var req auth.RegisterByCodeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	loginReq := &auth.LoginByCodeRequest{
-		Type:        req.Type,
-		Target:      req.Target,
-		Code:        req.Code,
-		CountryCode: req.CountryCode,
-	}
-
-	tokenPair, userInfo, err := svc.LoginOrRegisterByCode(c.Request.Context(), loginReq, jwtManager)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"token":  tokenPair,
-		"user":   userInfo,
-	})
-}
-
-// ==================== WebAuthn 人脸识别 ====================
-
-// handleFaceRegisterOptions 获取人脸注册选项（需JWT认证）
-func handleFaceRegisterOptions(c *gin.Context, faceSvc *auth.FaceAuthService, jwtManager *auth.JWTManager, logger *zap.Logger) {
-	userID := c.GetString("user_id")
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
-		return
-	}
-
-	options, err := faceSvc.GenerateRegistrationOptions(c.Request.Context(), userID)
-	if err != nil {
-		logger.Error("failed to generate face registration options", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, options)
-}
-
-// handleFaceRegisterVerify 验证人脸注册
-func handleFaceRegisterVerify(c *gin.Context, faceSvc *auth.FaceAuthService, jwtManager *auth.JWTManager, logger *zap.Logger) {
-	var req struct {
-		SessionKey  string                 `json:"session_key"`
-		Credential  map[string]interface{} `json:"credential"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	credential, err := faceSvc.VerifyRegistration(c.Request.Context(), req.SessionKey, req.Credential)
-	if err != nil {
-		logger.Warn("face registration verification failed", zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":    "face credential registered successfully",
-		"credential": credential,
-	})
-}
-
-// handleFaceAuthOptions 获取人脸认证选项（无需JWT，但需提供邮箱）
-func handleFaceAuthOptions(c *gin.Context, faceSvc *auth.FaceAuthService, logger *zap.Logger) {
-	var req struct {
-		Email string `json:"email" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	options, err := faceSvc.GenerateAuthenticationOptions(c.Request.Context(), req.Email)
-	if err != nil {
-		logger.Warn("failed to generate face auth options", zap.String("email", req.Email), zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, options)
-}
-
-// handleFaceAuthVerify 验证人脸认证
-func handleFaceAuthVerify(c *gin.Context, faceSvc *auth.FaceAuthService, jwtManager *auth.JWTManager, logger *zap.Logger) {
-	var req struct {
-		SessionKey  string                 `json:"session_key"`
-		Credential  map[string]interface{} `json:"credential"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	user, err := faceSvc.VerifyAuthentication(c.Request.Context(), req.SessionKey, req.Credential)
-	if err != nil {
-		logger.Warn("face authentication failed", zap.Error(err))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 生成 JWT
-	tokenPair, err := jwtManager.GenerateTokenPair(user.ID, user.TenantID, user.Role, user.Email)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"token": tokenPair,
-		"user": gin.H{
-			"id":        user.ID,
-			"username":  user.Username,
-			"email":     user.Email,
-			"role":      user.Role,
-			"tenant_id": user.TenantID,
-		},
-	})
-}
-
-// handlePaymentCallback 处理支付回调
-func handlePaymentCallback(c *gin.Context, svc *payment.PaymentService, channel payment.PaymentChannel, logger *zap.Logger) {
-	data, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "read body failed"})
-		return
-	}
-
-	sign := c.GetHeader("X-Signature")
-	if sign == "" {
-		sign = c.GetHeader("Wechatpay-Signature")
-	}
-	if sign == "" {
-		sign = c.Query("sign")
-	}
-
-	if err := svc.HandleCallback(c.Request.Context(), channel, data, sign); err != nil {
-		logger.Error("payment callback failed", zap.String("channel", string(channel)), zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 各渠道回调响应格式不同
-	switch channel {
-	case payment.ChannelAlipay:
-		c.String(http.StatusOK, "success")
-	case payment.ChannelWeChatPay:
-		c.JSON(http.StatusOK, gin.H{"code": "SUCCESS", "message": "OK"})
-	default:
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	}
-}
-
-// handleOAuthRedirect 发起 OAuth 重定向（GitHub / Google）
-func handleOAuthRedirect(c *gin.Context, cfg *config.Config, logger *zap.Logger) {
-	provider := c.Param("provider")
-	var authURL, clientID string
-	state := generateSecureRandom(16)
-
-	switch provider {
-	case "github":
-		clientID = cfg.OAuth.GitHubClientID
-		if clientID == "" {
-			clientID = os.Getenv("GITHUB_CLIENT_ID")
-		}
-		if clientID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub OAuth not configured"})
-			return
-		}
-		authURL = fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&state=%s&scope=user:email", clientID, state)
-	case "google":
-		clientID = cfg.OAuth.GoogleClientID
-		if clientID == "" {
-			clientID = os.Getenv("GOOGLE_CLIENT_ID")
-		}
-		if clientID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Google OAuth not configured"})
-			return
-		}
-		redirectURI := getOAuthRedirectBase(cfg, c.Request.Host) + "/auth/oauth/google/callback"
-		authURL = fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&state=%s&scope=openid+email+profile&response_type=code", clientID, redirectURI, state)
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
-		return
-	}
-
-	// 将 state 存入 Redis 供回调校验（简化：直接用 cookie）
-	c.SetCookie("oauth_state", state, 300, "/", "", false, true)
-	c.Redirect(http.StatusTemporaryRedirect, authURL)
-}
-
-// handleOAuthCallback 处理 OAuth 回调
-func handleOAuthCallback(c *gin.Context, jwtManager *auth.JWTManager, db *gorm.DB, subSvc *subscription.SubscriptionService, logger *zap.Logger, cfg *config.Config) {
-	provider := c.Param("provider")
-	code := c.Query("code")
-	state := c.Query("state")
-
-	// 校验 state
-	savedState, _ := c.Cookie("oauth_state")
-	if state == "" || state != savedState {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid state"})
-		return
-	}
-
-	var (
-		accessToken  string
-		email        string
-		name         string
-		avatarURL    string
-		providerID   string
-	)
-
-	switch provider {
-	case "github":
-		var err error
-		accessToken, email, name, avatarURL, providerID, err = exchangeGitHubCode(code, cfg)
-		if err != nil {
-			logger.Error("github oauth failed", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	case "google":
-		var err error
-		accessToken, email, name, avatarURL, providerID, err = exchangeGoogleCode(code, c.Request.Host, cfg)
-		if err != nil {
-			logger.Error("google oauth failed", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider"})
-		return
-	}
-
-	// 查找或创建用户
-	var oauthAcc OAuthAccount
-	var user auth.User
-
-	if err := db.Where("provider = ? AND provider_id = ?", provider, providerID).First(&oauthAcc).Error; err == nil {
-		// 已绑定，直接登录
-		db.First(&user, "id = ?", oauthAcc.UserID)
-	} else {
-		// 未绑定，按邮箱查找或创建
-		if err := db.Where("email = ?", email).First(&user).Error; err != nil {
-			// 创建新用户
-			var defaultTenant tenant.Tenant
-			if err := db.Where("slug = ?", "default").First(&defaultTenant).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "default tenant not found"})
-				return
-			}
-			user = auth.User{
-				ID:           uuid.New().String(),
-				TenantID:     defaultTenant.ID,
-				Username:     name,
-				Email:        email,
-				PasswordHash: "", // OAuth 用户无密码
-				Role:         auth.RoleDeveloper,
-				Status:       auth.UserActive,
-				Language:     "zh-CN",
-				Timezone:     "Asia/Shanghai",
-			}
-			if err := db.Create(&user).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
-				return
-			}
-			// 自动开通免费试用
-			if subSvc != nil {
-				trialPlan, err := subSvc.GetDefaultPlan(c.Request.Context(), subscription.PlanTrial)
-				if err == nil && trialPlan != nil {
-					subSvc.Subscribe(c.Request.Context(), user.ID, user.TenantID, trialPlan.ID)
-				}
-			}
-		}
-
-		// 绑定 OAuth
-		db.Create(&OAuthAccount{
-			ID:           uuid.New().String(),
-			UserID:       user.ID,
-			Provider:     provider,
-			ProviderID:   providerID,
-			AccessToken:  accessToken,
-			AvatarURL:    avatarURL,
-			DisplayName:  name,
-			CreatedAt:    time.Now(),
-		})
-	}
-
-	// 生成 JWT
-	tokenPair, err := jwtManager.GenerateTokenPair(user.ID, user.TenantID, user.Role, user.Email)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 重定向前端并携带 token
-	frontendURL := cfg.Server.FrontendURL
-	if frontendURL == "" {
-		frontendURL = os.Getenv("FRONTEND_URL")
-	}
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3001"
-	}
-	redirectURL := fmt.Sprintf("%s/#/dashboard?token=%s&refresh_token=%s", frontendURL, tokenPair.AccessToken, tokenPair.RefreshToken)
-	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
-}
-
-// exchangeGitHubCode 用 code 换取 GitHub 用户信息
-func exchangeGitHubCode(code string, cfg *config.Config) (accessToken, email, name, avatarURL, providerID string, err error) {
-	clientID := cfg.OAuth.GitHubClientID
-	if clientID == "" {
-		clientID = os.Getenv("GITHUB_CLIENT_ID")
-	}
-	clientSecret := cfg.OAuth.GitHubClientSecret
-	if clientSecret == "" {
-		clientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
-	}
-
-	// 换取 access_token
-	resp, err := http.Post(
-		"https://github.com/login/oauth/access_token?client_id="+clientID+"&client_secret="+clientSecret+"&code="+code,
-		"application/json",
-		nil,
-	)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-
-	var tokenResp map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&tokenResp)
-	accessToken, _ = tokenResp["access_token"].(string)
-
-	// 获取用户信息
-	req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp2, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp2.Body.Close()
-
-	var userInfo map[string]interface{}
-	json.NewDecoder(resp2.Body).Decode(&userInfo)
-	name, _ = userInfo["name"].(string)
-	if name == "" {
-		name, _ = userInfo["login"].(string)
-	}
-	avatarURL, _ = userInfo["avatar_url"].(string)
-	pid, _ := userInfo["id"].(float64)
-	providerID = fmt.Sprintf("%.0f", pid)
-
-	// 获取邮箱
-	req2, _ := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
-	req2.Header.Set("Authorization", "Bearer "+accessToken)
-	resp3, err := http.DefaultClient.Do(req2)
-	if err == nil {
-		defer resp3.Body.Close()
-		var emails []map[string]interface{}
-		json.NewDecoder(resp3.Body).Decode(&emails)
-		for _, e := range emails {
-			if primary, _ := e["primary"].(bool); primary {
-				email, _ = e["email"].(string)
-				break
-			}
-		}
-	}
-	return
-}
-
-// getOAuthRedirectBase 获取 OAuth 回调的基础 URL
-// 优先使用配置的 FRONTEND_URL，确保与 Google/GitHub Console 中配置的回调地址一致
-func getOAuthRedirectBase(cfg *config.Config, requestHost string) string {
-	// 优先使用环境变量或配置文件中的 FRONTEND_URL
-	frontendURL := cfg.Server.FrontendURL
-	if frontendURL == "" {
-		frontendURL = os.Getenv("FRONTEND_URL")
-	}
-	if frontendURL != "" {
-		// 去掉尾部的 / （如果有的话）
-		frontendURL = strings.TrimRight(frontendURL, "/")
-		return frontendURL
-	}
-
-	// 开发模式：使用请求的 Host
-	scheme := "http"
-	if requestHost != "" && !strings.Contains(requestHost, "localhost") && !strings.Contains(requestHost, "127.0.0.1") {
-		scheme = "https"
-	}
-	return scheme + "://" + requestHost
-}
-
-// exchangeGoogleCode 用 code 换取 Google 用户信息
-func exchangeGoogleCode(code, host string, cfg *config.Config) (accessToken, email, name, avatarURL, providerID string, err error) {
-	clientID := cfg.OAuth.GoogleClientID
-	if clientID == "" {
-		clientID = os.Getenv("GOOGLE_CLIENT_ID")
-	}
-	clientSecret := cfg.OAuth.GoogleClientSecret
-	if clientSecret == "" {
-		clientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
-	}
-	redirectURI := getOAuthRedirectBase(cfg, host) + "/auth/oauth/google/callback"
-
-	// 换取 token
-	resp, err := http.PostForm("https://oauth2.googleapis.com/token", map[string][]string{
-		"code":          {code},
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
-		"redirect_uri":  {redirectURI},
-		"grant_type":    {"authorization_code"},
-	})
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-
-	var tokenResp map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&tokenResp)
-	accessToken, _ = tokenResp["access_token"].(string)
-	idToken, _ := tokenResp["id_token"].(string)
-	_ = idToken
-
-	// 获取用户信息
-	req, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp2, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp2.Body.Close()
-
-	var userInfo map[string]interface{}
-	json.NewDecoder(resp2.Body).Decode(&userInfo)
-	email, _ = userInfo["email"].(string)
-	name, _ = userInfo["name"].(string)
-	avatarURL, _ = userInfo["picture"].(string)
-	pid, _ := userInfo["id"].(string)
-	providerID = pid
-	return
-}
-
-// handleImageGeneration 处理图像生成请求（兼容 OpenAI /v1/images/generations）
-func handleImageGeneration(c *gin.Context, modelRouter *smartrouter.ModelRouter, billingSvc *billing.BillingService, logger *zap.Logger) {
-	var req struct {
-		Model          string `json:"model"`
-		Prompt         string `json:"prompt" binding:"required"`
-		N              int    `json:"n"`
-		Size           string `json:"size"`
-		ResponseFormat string `json:"response_format"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
-		return
-	}
-	if req.N <= 0 {
-		req.N = 1
-	}
-	if req.Size == "" {
-		req.Size = "1024x1024"
-	}
-	if req.Model == "" {
-		req.Model = "dall-e-3"
-	}
-	if req.ResponseFormat == "" {
-		req.ResponseFormat = "url"
-	}
-
-	// 构造上游请求体
-	payload := map[string]interface{}{
-		"model":           req.Model,
-		"prompt":          req.Prompt,
-		"n":               req.N,
-		"size":            req.Size,
-		"response_format": req.ResponseFormat,
-	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	// 路由选择
-	chatReq := &gateway.ChatRequest{
-		Model:    req.Model,
-		Messages: []gateway.ChatMessage{{Role: "user", Content: req.Prompt}},
-		TraceID:  uuid.New().String(),
-	}
-	routeResult, err := modelRouter.Route(c.Request.Context(), chatReq)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "no available upstream for model " + req.Model, "type": "route_error"}})
-		return
-	}
-
-	mc := routeResult.ModelConfig
-
-	// 向上游发送图片生成请求
-	upstreamURL := strings.TrimSuffix(mc.Endpoint, "/") + "/v1/images/generations"
-	httpReq, _ := http.NewRequestWithContext(c.Request.Context(), "POST", upstreamURL, bytes.NewReader(payloadBytes))
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+mc.APIKey)
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		logger.Error("image generation upstream failed", zap.Error(err))
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_error"}})
-		return
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-
-	// 计费（简化：按图片数量计费）
-	tenantID := c.GetString("tenant_id")
-	userID := c.GetString("user_id")
-	if tenantID != "" && userID != "" {
-		costCents := int64(req.N * 400) // 每张约 4 元
-		billingSvc.TopUp(c.Request.Context(), tenantID, userID, -costCents) // 负数=扣费
-	}
-
-	c.Data(resp.StatusCode, "application/json", bodyBytes)
 }

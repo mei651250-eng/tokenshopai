@@ -42,7 +42,11 @@ echo "[3/5] 构建前端..."
 cd $BASE/frontend
 export NODE_OPTIONS="--max-old-space-size=2048"
 npm install --no-audit --no-fund 2>&1 | tail -2 || true
-npx vite build --minify false 2>&1 | tail -5
+npx vite build --minify false
+if [ ! -f dist/index.html ]; then
+  echo -e "${RED}错误: 构建未生成 dist/index.html，中止部署（否则前端将 403）。${NC}"
+  exit 1
+fi
 echo "  前端构建完成"
 
 # 4. 部署

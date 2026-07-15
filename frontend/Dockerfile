@@ -4,7 +4,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+# 限制堆内存 + 关闭压缩，避免小内存容器构建时 OOM 被 Killed
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN npm run build -- --minify false
 
 # 运行阶段 - 使用 nginx 提供 SPA 服务
 FROM nginx:alpine

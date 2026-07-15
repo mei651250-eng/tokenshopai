@@ -204,11 +204,15 @@ go build -o tokenhub ./cmd/server/ && ok "后端编译完成" || err "后端编�
 step "9/11 构建前端 (swap + 内存限制 防 OOM)"
 # ============================================================
 cd "$BASE/frontend"
-export NODE_OPTIONS="--max-old-space-size=2048"
+export NODE_OPTIONS="--max-old-space-size=4096"
 info "安装 npm 依赖..."
 npm install --no-audit --no-fund 2>&1 | tail -3 || warn "npm install 有警告，继续..."
 info "构建前端 (--minify false 以降低内存占用)..."
-npx vite build --minify false 2>&1 | tail -5 && ok "前端构建完成" || err "前端构建失败"
+npx vite build --minify false
+if [ ! -f dist/index.html ]; then
+  err "前端构建失败：未生成 dist/index.html，中止安装（否则前端将 403）"
+fi
+ok "前端构建完成"
 
 # ============================================================
 step "10/11 部署前端与 Nginx 配置"
